@@ -6,17 +6,37 @@ let account = null;
 function setStatus(text){
   document.querySelectorAll("#walletStatus").forEach(x => x.textContent = text);
 }
+function setAccount(addr){
+  account = addr || null;
+  if(account){
+    setStatus(account.slice(0,6)+"..."+account.slice(-4));
+    document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="WALLET CONNECTED");
+  } else {
+    setStatus("NOT CONNECTED");
+    document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="CONNECT WALLET");
+  }
+  const act = document.querySelector("#activateBtn");
+  if(act && !account) act.disabled = true;
+}
 async function connectWallet(){
   if(!window.ethereum){ setStatus("NO EVM WALLET DETECTED"); return; }
   try{
     const accounts = await window.ethereum.request({method:"eth_requestAccounts"});
-    account = accounts[0];
-    setStatus(account.slice(0,6)+"..."+account.slice(-4));
-    document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="WALLET CONNECTED");
+    setAccount(accounts[0]);
   }catch(e){ setStatus("CONNECTION CANCELLED"); }
 }
+// Every page is a fresh document. The wallet already remembers this site, so ask it
+// silently on load (eth_accounts never prompts) and restore the connected state.
+async function restoreWallet(){
+  if(!window.ethereum) return;
+  try{
+    const accounts = await window.ethereum.request({method:"eth_accounts"});
+    if(accounts.length) setAccount(accounts[0]);
+  }catch(e){}
+}
 document.querySelectorAll("#connectWallet").forEach(b=>b.addEventListener("click",connectWallet));
-if(window.ethereum){ window.ethereum.on?.("accountsChanged", accounts => { if(accounts.length){ account=accounts[0]; setStatus(account.slice(0,6)+"..."+account.slice(-4)); document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="WALLET CONNECTED"); } else { account=null; setStatus("NOT CONNECTED"); document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="CONNECT WALLET"); } }); }
+if(window.ethereum){ window.ethereum.on?.("accountsChanged", accounts => setAccount(accounts[0])); }
+restoreWallet();
 
 document.querySelectorAll("[data-copy]").forEach(btn=>{
   btn.addEventListener("click", async ()=>{
