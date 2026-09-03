@@ -1,0 +1,119 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Docs | PIXEL PIPS</title><meta name="description" content="Pixel Pips technical docs. Supply, floors, tiers, activation, rewards, fee engine and rendering spec.">
+<meta property="og:type" content="website"><meta property="og:site_name" content="PIXEL PIPS"><meta property="og:title" content="Docs | PIXEL PIPS"><meta property="og:description" content="Pixel Pips technical docs. Supply, floors, tiers, activation, rewards, fee engine and rendering spec."><meta property="og:url" content="https://pixelpips.cash/docs.html"><meta property="og:image" content="https://img.syst3mc0r3.art/pixelpips/activated/420.png"><meta name="twitter:card" content="summary"><meta name="twitter:site" content="@PixelPips404"><meta name="twitter:title" content="Docs | PIXEL PIPS"><meta name="twitter:description" content="Pixel Pips technical docs. Supply, floors, tiers, activation, rewards, fee engine and rendering spec."><meta name="twitter:image" content="https://img.syst3mc0r3.art/pixelpips/activated/420.png">
+<link rel="icon" href="favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png"><link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="stylesheet" href="style.css"></head><body><header class="site-header">
+<a class="brand" href="index.html"><img class="logo" src="pip-logo-transparent.png" alt="">PIXEL PIPS</a>
+<nav><a href="index.html">HOME</a><a href="pips.html">MY PIPS</a><a href="activation.html">ACTIVATE</a><a href="market.html">MARKET</a><a href="floors.html">FLOORS</a><a href="rewards.html">REWARDS</a><a href="specials.html">SPECIALS</a><a href="live.html">LIVE</a><a href="games.html">GAMES</a><a class="active" href="docs.html">DOCS</a></nav><div class="header-actions"><div class="sfx-control" title="Game Boy interface sounds"><span class="sfx-label">SFX</span><button type="button" data-sfx-toggle aria-pressed="true">SFX ON</button><input type="range" min="0" max="100" value="100" data-sfx-volume aria-label="SFX volume"></div><button class="wallet-button" id="connectWallet" type="button">CONNECT WALLET</button><span class="wallet-status" id="walletStatus">NOT CONNECTED</span><a class="x-link" href="https://x.com/PixelPips404" target="_blank" rel="noopener">X ↗</a></div>
+</header><main class="page">
+<div class="eyebrow">TECHNICAL DOCUMENTATION</div><h1>DOCS</h1><p class="lead narrow">Technical reference for the collection, ERC-404 state, attributes, activation, rewards, fee flow, market surfaces and frontend behavior.</p>
+<section class="section panel pad"><div class="section-label">01 · SYSTEM OVERVIEW</div><h2>PIXEL PIPS IN ONE PAGE</h2>
+<p>Pixel Pips are receivers. Each normal pip is tuned to one of ten channels, the floors, and its antenna decides how well it holds the signal, the tier. Dormant is off. Burning a unit switches it on. Everything below is that sentence in contract terms.</p>
+<p>Pixel Pips is a fixed supply collection of 3,334 IDs on Robinhood Chain. IDs 0 through 3329 are 3,330 normal Pips divided evenly across ten floors. IDs 3330 through 3333 are the four specials.</p>
+<p>Normal Pips have a floor and tier. Floor is the reward destination and the background identity. Tier is the reward weight and is represented visually by the antenna. The cosmetic attributes are generated deterministically from the collection attribute bytes. New traits must never be inserted into the PRNG stream because doing so would shift every subsequent trait.</p>
+<p>The collection has three visual states: pre reveal cartridge, revealed dormant Pip and revealed activated Pip. Status is derived from actual on-chain activation state.</p></section>
+<section class="section panel pad"><div class="section-label">02 · SUPPLY AND IDS</div><h2>3,334 FIXED IDS</h2>
+<div class="table"><div class="row head"><span>RANGE</span><span>COUNT</span><span>TYPE</span><span>RULE</span></div>
+<div class="row"><b>0 to 3329</b><span>3,330</span><span>NORMAL</span><span>10 floors × 333</span></div>
+<div class="row"><b>3330 to 3333</b><span>4</span><span>SPECIAL</span><span>Specific ID assignment</span></div></div>
+<p>Special IDs never enter the normal random allocator. They do not receive fake floor or tier values. Their metadata exposes their special class instead.</p></section>
+<section class="section panel pad"><div class="section-label">03 · FLOORS</div><h2>TEN REWARD STREAMS</h2>
+<p>Every normal floor contains exactly 333 Pips. The floors are NVDA, AAPL, TSLA, GME, SPCX, SPY, PLTR, NFLX, RDDT and MSTR. Floor is represented by background hue and pattern and is also the key used by the reward accumulator.</p>
+<p>A floor with zero activated weight does not lose incoming value. Its reward is parked in a pending pot. When the first Pip on that floor activates, that pending value becomes part of the floor's claimable accounting.</p></section>
+<section class="section panel pad"><div class="section-label">04 · TIERS</div><h2>WEIGHT IS THE RARITY ENGINE</h2>
+<div class="table"><div class="row head"><span>TIER</span><span>WEIGHT</span><span>COUNT</span><span>SHARE MULTIPLIER</span></div>
+<div class="row"><b>STATIC</b><span>100</span><span>1,838</span><span>1.00×</span></div>
+<div class="row"><b>WEAK</b><span>150</span><span>999</span><span>1.50×</span></div>
+<div class="row"><b>STRONG</b><span>250</span><span>396</span><span>2.50×</span></div>
+<div class="row"><b>LOCKED</b><span>500</span><span>97</span><span>5.00×</span></div></div>
+<p>Tier is stored in the attribute byte and drives the antenna. It is not another cosmetic PRNG draw. The deployed attribute audit verified all 3,330 normal IDs against the manifest with zero tier or floor mismatches.</p></section>
+<section class="section panel pad"><div class="section-label">05 · METADATA</div><h2>REVEALED ATTRIBUTES</h2>
+<p>Revealed normal Pips expose Floor, Tier, Face Colour, Mouth, Ears, Eyewear, Blush, Pupils and Status. Antenna is deliberately excluded as a separate metadata trait because it is the visual representation of Tier.</p>
+<p>Status is Dormant or Activated and must follow the actual on-chain activated state. The pre reveal cartridge is an unrevealed image state, not a trait.</p></section>
+<section class="section panel pad"><div class="section-label">06 · ACTIVATION</div><h2>BURN ONE UNIT</h2>
+<p>Activation is a state transition on a specific Pip. The caller must own the Pip. A dormant Pip can be activated once. Activation burns exactly 1 UNIT, changes the status to Activated and adds the Pip's tier weight to its floor's active accounting.</p>
+<div class="code">activate(tokenId)
+
+1. verify tokenId is a normal Pip
+2. verify caller owns tokenId
+3. verify tokenId is not already activated
+4. burn exactly 1 UNIT
+5. mark tokenId activated
+6. add tier weight to floor active weight
+7. settle or attach the reward accumulator checkpoint</div>
+<p>The special IDs do not enter this normal weight path.</p></section>
+<section class="section panel pad"><div class="section-label">07 · REWARD ACCOUNTING</div><h2>ACCUMULATOR MODEL</h2>
+<div class="code">pip weight = tier weight × boost / 100
+boost = 125 with a whole QUOTRON in the wallet, else 100
+
+floor reward growth = incoming floor pot / total activated weight
+
+pip entitlement = accumulator growth × pip weight
+
+claimable = entitlement - pip checkpoint</div>
+<p>Rewards are tracked by floor and weight. This makes the accounting scale with activated weight rather than requiring a distribution transaction for every Pip.</p>
+<p>On transfer of an activated Pip, accrued value is settled to the current holder before ownership changes. The NFT does not carry an unclaimed seller balance to a new buyer.</p></section>
+<section class="section panel pad"><div class="section-label">08 · FEE ENGINE</div><h2>THE FEE PIPELINE</h2>
+<p>The fee system uses a 10,000 BPS denominator. The base fee is 300 BPS. The launch fee is 9000 BPS until the owner calls finalizeLaunchFees(). Whitelist and keeper addresses use the 300 BPS rate from launch. The buyer cooldown is one hour.</p>
+<div class="code">gross swap G
+fee F = G × B / 10000
+
+reflections = F × 160 / 240
+burn        = F × 17  / 240
+creator     = F × 12  / 240
+LP          = F - reflections - burn - creator
+           = F × 51 / 240</div>
+<p>At 300 BPS of gross swap volume, that becomes 2.0000% reflections, 0.6375% LP, 0.2125% burn and 0.1500% creator. At 9000 BPS, the corresponding values are 60.000%, 19.125%, 6.375% and 4.500%.</p>
+<p>The Pixel Pips fee math was differentially tested against the reference implementation's deployed fee library with 419 carve inputs and 400 fee from gross cases, with zero mismatches.</p></section>
+<section class="section panel pad"><div class="section-label">09 · HOOK BEHAVIOR</div><h2>POT BASED DISTRIBUTION</h2>
+<p>The WETH reward hook accumulates reflections, LP and burn amounts into pots. The keeper can pull those pots using the hook's pull functions. The hook is not a push based distributor that sends every allocation immediately.</p>
+<p>Sinks are configured through configureAndSealSinks and then sealed. The owner and keeper are distinct roles. The keeper is the address used for operational draining and also receives the privileged 300 BPS trading rate.</p>
+<p>Verified addresses are kept on the Contracts page.</p></section>
+<section class="section panel pad"><div class="section-label">10 · MARKET</div><h2>WHERE PIPS ARE BOUGHT</h2>
+<p>The market page is the acquisition surface for Pixel Pips. There is no mint. The supply is seeded into the PIPS/WETH pool at launch, so the primary route is the swap: buy PIPS, and every whole unit held is a Pip. The secondary marketplace is for buying a specific Pip from another holder.</p>
+<p>The fee engine is not a marketplace. It supports the Pixel Pips reward flow, while buying and trading remain on the Market page.</p></section>
+<section class="section panel pad"><div class="section-label">11 · FRONTEND DATA</div><h2>NO FAKE LIVE NUMBERS</h2>
+<p>Static collection facts can be shown before deployment. Wallet balances, ownership, activation status, reward balances, market price, liquidity, volume and reward hook pot balances should be read from chain or a defined indexer once the relevant contracts are deployed.</p>
+<p>If a contract is not deployed yet, the frontend should say pending deployment rather than inventing a number.</p></section>
+<section class="section panel pad"><div class="section-label">12 · RENDERING</div><h2>64 PX NATIVE ART</h2>
+<p>Native art is 64×64. PNG output is 512×512 using nearest neighbor. GIF output is 256×256 using nearest neighbor. The style is a Game Boy Color inspired palette with deliberate dithering, crisp pixel edges, a single dark outline, 1px shadow shell, contact shadows, integer snapped circles, round eyes, eye specular dots, outward ears, hand drawn mouth bitmaps and a forced contrast anchor palette.</p>
+<p>Dormant art is cold and near monochrome. Activated art is full color. The antenna is the tier visual. Floor is the background.</p></section>
+<section class="section panel pad"><div class="section-label">13 · CONTRACT STATUS AND INTEGRATION</div><h2>WHAT IS DEPLOYED VS PENDING</h2><p>Pixel Pips is not yet deployed to Robinhood Chain mainnet. The ten contracts were tested two ways before deployment: a mock suite against a simulated pool manager, and a mainnet fork suite that runs the assembled swap path through the live PoolManager, the stock pools and the canonical router.</p><p>The attribute audit read all 3,330 normal IDs from a test deployment and verified exact tier counts, exact floor counts, 333 Pips per floor and zero manifest mismatches. A special ID bug was found and fixed. <code>tierOf()</code> and <code>floorOf()</code> both revert for special IDs, and specials no longer enter normal weight logic.</p><div class="code">PIXEL PIPS: PENDING DEPLOYMENT
+OFFICIAL ADDRESSES: CONTRACTS PAGE, AFTER DEPLOY AND VERIFY</div></section>
+<section class="section panel pad"><div class="section-label">14 · ACTIVATION AND TRANSFER EDGE CASES</div><h2>STATE TRANSITIONS</h2><p>Normal activation requires ownership, normal Pip status and dormant status. Exactly 1 UNIT is burned. The Pip is marked activated, its tier weight is added to the active weight of its floor and a reward accumulator checkpoint is established.</p><p>Double activation must revert. Special IDs use a separate path and do not use the normal weight system.</p><p>Rewards do not follow the NFT. Before an activated Pip transfers, accrued reward value is settled to the current holder. This prevents the buyer from inheriting the seller's unclaimed rewards.</p></section>
+<section class="section panel pad"><div class="section-label">15 · FEE DETAILS</div><h2>EXACT CARVE MATH</h2><p>The fee system uses a 10,000 BPS denominator and 240 total allocation parts. The normal base fee is 300 BPS, or 3%. The launch fee is 9000 BPS, or 90%, until the owner calls <code>finalizeLaunchFees()</code>. Whitelist and keeper accounts pay 300 BPS from launch. Buyer cooldown is one hour.</p><div class="code">For gross swap G:
+
+F = G × B / 10000
+reflections = F × 160 / 240
+burn        = F × 17 / 240
+creator     = F × 12 / 240
+LP          = F - reflections - burn - creator
+            = F × 51 / 240
+
+300 BPS:
+reflections  2.0000% gross
+LP           0.6375% gross
+burn         0.2125% gross
+creator      0.1500% gross
+
+9000 BPS:
+reflections  60.000% gross
+LP           19.125% gross
+burn         6.375% gross
+creator      4.500% gross</div><p>This math was differentially tested against the reference implementation's deployed fee library using 419 carve inputs and 400 fee-from-gross cases with zero mismatches. The extracted libraries used for the comparison were FullMath and FeeLib.</p></section>
+<section class="section panel pad"><div class="section-label">16 · HOOK ACCOUNTING</div><h2>POTS, NOT PUSH DISTRIBUTION</h2><p>The WETH reward hook is pot based. It accumulates <code>reflectionPot</code>, <code>lpPot</code> and <code>burnPot</code>. The keeper pulls these balances with <code>pullReflections()</code>, <code>pullLp()</code> and <code>pullBurn()</code>.</p><p>The hook is not a push distribution that executes a downstream distribution on every swap. Sinks are configured through <code>configureAndSealSinks()</code> and then frozen.</p></section>
+<section class="section panel pad"><div class="section-label">17 · FRONTEND CONTRACT</div><h2>WHAT THE SITE MUST READ</h2><p>Before deployment, frontend values that depend on contracts must remain pending or not deployed. After deployment, live surfaces should read total supply, activated count, UNIT burned, active floor weights, reward pots, market price, liquidity, volume, reward-engine purchase totals, WETH conversion totals and reward hook pots.</p><p>My Pips should enumerate owned Pips and expose IDs, floor, tier, status, activation state and rewards, with activation and claiming actions enabled only when the corresponding contract functionality is live. The Market page remains the place to buy and trade Pips. The fee engine remains internal and never becomes a separate destination page.</p></section>
+<section class="section panel pad"><div class="section-label">18 · COLLECTION RENDERING SPEC</div><h2>64 × 64 NATIVE GRID</h2><p>Native art is 64×64. PNG output is 512×512 using 8× nearest-neighbor scaling. GIF output is 256×256 using 4× nearest-neighbor scaling. No smoothing or interpolation is allowed.</p><p>The locked art direction uses a Game Boy Color look, a single dark outline, no light rim, a 1px shadow shell, contact shadows, integer-snapped circles, round eyes, eye specular dots, outward ears, a minimum 2px antenna stem, hand-drawn mouth bitmaps and a forced-contrast anchor palette. Face hue remains unsnapped. Dormant art is cold and near monochrome. Activated art is full color.</p><p>Floor is visually represented by the background. Tier is visually represented by the antenna. Tier must not become a separate metadata trait, and new cosmetic traits must never be inserted into the PRNG stream.</p></section>
+<section class="section panel pad"><div class="section-label">19 · IMPLEMENTATION STATUS</div><h2>WHAT IS LOCKED</h2>
+<div class="grid3">
+<div class="feature"><b>LOCKED</b><span class="muted">Supply, IDs, floors, tiers, attribute byte structure, activation burn and reward accounting.</span></div>
+<div class="feature"><b>VERIFIED</b><span class="muted">Fee split, launch fee logic, hook pots, sink sealing and the assembled swap path on a mainnet fork.</span></div>
+<div class="feature"><b>NEXT</b><span class="muted">Mainnet deployment, contract verification on Blockscout and live frontend wiring.</span></div>
+</div></section>
+<section class="section faq"><details><summary>Why are the specials outside the normal allocator?</summary><p>They are a separate special layer and do not have normal floor or tier semantics.</p></details>
+<details><summary>Does activation require a marketplace?</summary><p>No. Activation is a direct contract interaction from the wallet dashboard. The market is where the Pip is acquired.</p></details>
+<details><summary>Does the reward token follow the NFT when it is sold?</summary><p>Accrued value is settled before transfer, so the seller does not hand a hidden reward balance to the buyer.</p></details>
+
+</section>
+
+<footer class="footer"><span>PIXEL PIPS · ROBINHOOD CHAIN · 4663</span><span><a href="contracts.html">CONTRACTS</a> · <a href="docs.html">DOCS</a> · <a href="https://x.com/PixelPips404" target="_blank" rel="noopener">X</a></span></footer>
+</main><script src="app.js"></script><script src="audio/pixelpips-sfx.js"></script></body></html>
