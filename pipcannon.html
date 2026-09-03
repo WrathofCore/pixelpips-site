@@ -152,19 +152,23 @@ function renderIdentity(){
   const w=document.getElementById('wallet'), box=document.getElementById('idbox');
   if(!account){
     w.textContent='CONNECT WALLET';
-    box.innerHTML='<span class="muted">NOT CONNECTED. WALLET IS OPTIONAL. IT ONLY GATES THE LEADERBOARD.</span><button class="mini" id="bconnect">CONNECT WALLET</button>';
+    box.innerHTML='<span class="muted">NOT CONNECTED. WALLET IS OPTIONAL. IT ONLY GATES THE LEADERBOARD.</span><button class="mini" id="bconnect">CONNECT WALLET</button><span class="muted" id="idnote"></span>';
     document.getElementById('bconnect').onclick=connect;
   }else if(!token){
     w.textContent=short(account);
-    box.innerHTML='<span>'+short(account)+'</span><span class="muted">SIGN A FREE MESSAGE TO PROVE THIS WALLET IS YOURS. NO TRANSACTION.</span><button class="mini" id="bsign">SIGN IN</button>';
+    box.innerHTML='<span>'+short(account)+'</span><span class="muted">SIGN A FREE MESSAGE TO PROVE THIS WALLET IS YOURS. NO TRANSACTION.</span><button class="mini" id="bsign">SIGN IN</button><button class="mini ghost" id="bdisc">DISCONNECT</button><span class="muted" id="idnote"></span>';
     document.getElementById('bsign').onclick=signIn;
+    document.getElementById('bdisc').onclick=disconnect;
   }else if(!myName()){
     w.textContent=short(account);
-    box.innerHTML='<span>'+short(account)+' <span class="muted">SIGNED IN</span></span><input id="nameinput" placeholder="PICK A NAME (3-14)" maxlength="14"><button class="mini" id="bname">SET NAME</button>';
+    box.innerHTML='<span>'+short(account)+' <span class="muted">SIGNED IN</span></span><input id="nameinput" placeholder="PICK A NAME (3-14)" maxlength="14"><button class="mini" id="bname">SET NAME</button><button class="mini ghost" id="bout">SIGN OUT</button><span class="muted" id="idnote"></span>';
     document.getElementById('bname').onclick=claimName;
+    document.getElementById('bout').onclick=signOut;
   }else{
     w.textContent=myName();
-    box.innerHTML='<span>'+myName()+' <span class="muted">'+short(account)+'</span></span><span class="muted">SIGNED IN. SCORES ARE VERIFIED SERVER SIDE.</span>';
+    box.innerHTML='<span>'+myName()+' <span class="muted">'+short(account)+'</span></span><span class="muted">SIGNED IN. SCORES ARE VERIFIED SERVER SIDE.</span><button class="mini ghost" id="bout">SIGN OUT</button><button class="mini ghost" id="bdisc">DISCONNECT</button><span class="muted" id="idnote"></span>';
+    document.getElementById('bout').onclick=signOut;
+    document.getElementById('bdisc').onclick=disconnect;
   }
   if(typeof chatState==='function') chatState();
 }
@@ -183,21 +187,59 @@ async function restore(){
   }catch(e){}
   renderIdentity(); renderBoard();
 }
+function idNote(msg){
+  const n=document.getElementById('idnote');
+  if(n) n.textContent=msg;
+}
 async function signIn(){
-  if(!account||!window.ethereum) return;
-  const box=document.getElementById('idbox');
+  if(!account){ idNote('CONNECT A WALLET FIRST'); return; }
+  if(!window.ethereum){ idNote('NO EVM WALLET IN THIS BROWSER'); return; }
+  const btn=document.getElementById('bsign');
+  if(btn){ btn.disabled=true; btn.textContent='SIGNING…'; }
+  idNote('REQUESTING A NONCE…');
   try{
     const r1=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addr:account})});
-    const d1=await r1.json();
-    if(!d1.ok){ box.innerHTML='<span class="muted">SIGN IN UNAVAILABLE. SERVER HAS NO STORAGE YET.</span>'; return; }
-    const sig=await window.ethereum.request({method:'personal_sign',params:[d1.message,account]});
+    let d1={}; try{ d1=await r1.json(); }catch(_){}
+    if(!r1.ok||!d1.ok){
+      idNote(d1.offline ? 'SERVER STORAGE NOT READY (HTTP '+r1.status+')' : 'AUTH FAILED: HTTP '+r1.status+' '+(d1.error||''));
+      if(btn){ btn.disabled=false; btn.textContent='SIGN IN'; }
+      return;
+    }
+    idNote('CHECK YOUR WALLET AND SIGN THE MESSAGE');
+    let sig;
+    try{
+      sig=await window.ethereum.request({method:'personal_sign',params:[d1.message,account]});
+    }catch(err){
+      idNote(err && err.code===4001 ? 'YOU REJECTED THE SIGNATURE' : 'WALLET COULD NOT SIGN: '+((err&&err.message)||'unknown'));
+      if(btn){ btn.disabled=false; btn.textContent='SIGN IN'; }
+      return;
+    }
+    idNote('VERIFYING…');
     const r2=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addr:account,nonce:d1.nonce,sig})});
-    const d2=await r2.json();
-    if(!d2.ok){ box.innerHTML='<span class="muted">SIGNATURE REJECTED.</span>'; return; }
+    let d2={}; try{ d2=await r2.json(); }catch(_){}
+    if(!r2.ok||!d2.ok){
+      idNote('REJECTED: '+(d2.error||('HTTP '+r2.status)));
+      if(btn){ btn.disabled=false; btn.textContent='SIGN IN'; }
+      return;
+    }
     token=d2.token; serverName=d2.name||null;
     try{localStorage.setItem('pipcannon-sess',JSON.stringify({token,addr:account,name:serverName}));}catch(e){}
-    renderIdentity(); renderBoard(); chatState();
-  }catch(e){ renderIdentity(); }
+    renderIdentity(); renderBoard(); chatState(); pullBoard();
+  }catch(e){
+    idNote('NETWORK ERROR: '+((e&&e.message)||'unknown'));
+    if(btn){ btn.disabled=false; btn.textContent='SIGN IN'; }
+  }
+}
+function signOut(){
+  token=null; serverName=null;
+  try{localStorage.removeItem('pipcannon-sess');}catch(e){}
+  renderIdentity(); renderBoard(); chatState();
+}
+function disconnect(){
+  signOut();
+  account=null;
+  renderIdentity(); renderBoard(); chatState();
+  idNote('DISCONNECTED HERE. YOUR WALLET STILL LISTS THIS SITE UNTIL YOU REMOVE IT THERE.');
 }
 async function claimName(){
   const el=document.getElementById('nameinput');
@@ -206,13 +248,19 @@ async function claimName(){
   try{
     const r=await fetch('/api/name',{method:'POST',headers:authHeaders(),body:JSON.stringify({name:v})});
     const d=await r.json();
-    if(!d.ok){ el.value=''; el.placeholder = d.error==='name-taken'?'TAKEN, TRY ANOTHER':'REJECTED'; return; }
+    if(!d.ok){
+      el.value='';
+      el.placeholder = d.error==='name-taken'?'TAKEN, TRY ANOTHER':'REJECTED';
+      idNote(d.error==='sign-in-required'?'SESSION EXPIRED, SIGN IN AGAIN':('NAME REJECTED: '+(d.error||r.status)));
+      if(d.error==='sign-in-required') signOut();
+      return;
+    }
     serverName=d.name;
     try{localStorage.setItem('pipcannon-sess',JSON.stringify({token,addr:account,name:serverName}));}catch(e){}
     renderIdentity(); renderBoard(); chatState();
-  }catch(e){}
+  }catch(e){ idNote('NETWORK ERROR SETTING NAME'); }
 }
-document.getElementById('wallet').onclick=connect;
+document.getElementById('wallet').onclick=()=>{ if(account) signOut(); else connect(); };
 if(window.ethereum&&window.ethereum.on) window.ethereum.on('accountsChanged',a=>{account=a[0]||null;token=null;serverName=null;try{localStorage.removeItem('pipcannon-sess');}catch(e){}renderIdentity();renderBoard();});
 
 let globalBoard=null;
@@ -974,6 +1022,13 @@ function renderChat(msgs){
   chatlog.innerHTML=msgs.map(m=>'<div class="m"><b>'+esc(m.n)+'</b> <span>'+esc(m.t)+'</span></div>').join('');
   if(stick) chatlog.scrollTop=chatlog.scrollHeight;
 }
+async function verifySession(){
+  if(!token) return;
+  try{
+    const r=await fetch('/api/name',{method:'POST',headers:authHeaders(),body:JSON.stringify({name:serverName||''})});
+    if(r.status===401) signOut();
+  }catch(e){}
+}
 async function pollChat(){
   try{
     const r=await fetch('/api/chat',{cache:'no-store'});
@@ -1012,7 +1067,7 @@ document.getElementById('chatform').addEventListener('submit',async e=>{
   chatsend.disabled=false;
   pollChat();
 });
-pollChat(); setInterval(pollChat,5000);
+verifySession(); pollChat(); setInterval(pollChat,5000);
 
 let boardOnline=false;
 async function pullBoard(){
