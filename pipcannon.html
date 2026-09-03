@@ -147,7 +147,10 @@ let account=null, token=null, serverName=null;
 try{const t=JSON.parse(localStorage.getItem('pipcannon-sess')||'{}'); if(t.token&&t.addr){token=t.token;serverName=t.name||null;}}catch(e){}
 const authHeaders=()=>token?{'Content-Type':'application/json','Authorization':'Bearer '+token}:{'Content-Type':'application/json'};
 const short=a=>a.slice(0,6)+'...'+a.slice(-4);
-function myName(){ return serverName || (account ? (names[account.toLowerCase()]||null) : null); }
+// Only a server-issued name counts. A name kept in localStorage from an older
+// build would make the UI think you could post while the server had no record,
+// which is what produced silent rejections.
+function myName(){ return token ? serverName : null; }
 function renderIdentity(){
   const w=document.getElementById('wallet'), box=document.getElementById('idbox');
   if(!account){
@@ -1054,7 +1057,10 @@ document.getElementById('chatform').addEventListener('submit',async e=>{
       chatinput.placeholder = d.error==='slow-down' ? 'TOO FAST, WAIT A MOMENT'
                             : d.error==='sign-in-required' ? 'SIGN IN AGAIN'
                             : d.error==='banned' ? 'THIS WALLET IS BANNED'
-                            : 'MESSAGE REJECTED';
+                            : d.error==='no-name' ? 'SET A NAME FIRST'
+                            : 'REJECTED: '+(d.error||('HTTP '+r.status));
+      if(d.error==='no-name'){ serverName=null; renderIdentity(); }
+      if(d.error==='sign-in-required') signOut();
       chatinput.value=text;               // give the text back so nothing is lost
       setTimeout(()=>{chatNotice=0;chatState();},3600);
     }

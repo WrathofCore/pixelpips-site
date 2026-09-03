@@ -10,7 +10,7 @@ function setAccount(addr){
   account = addr || null;
   if(account){
     setStatus(account.slice(0,6)+"..."+account.slice(-4));
-    document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="WALLET CONNECTED");
+    document.querySelectorAll("#connectWallet").forEach(b=>{b.textContent="WALLET CONNECTED";b.title="Click to disconnect";});
   } else {
     setStatus("NOT CONNECTED");
     document.querySelectorAll("#connectWallet").forEach(b=>b.textContent="CONNECT WALLET");
@@ -34,7 +34,17 @@ async function restoreWallet(){
     if(accounts.length) setAccount(accounts[0]);
   }catch(e){}
 }
-document.querySelectorAll("#connectWallet").forEach(b=>b.addEventListener("click",connectWallet));
+function disconnectWallet(){
+  setAccount(null);
+  try{ localStorage.removeItem('pipcannon-sess'); }catch(e){}
+  // A site cannot make a wallet forget it. This clears the page's own state;
+  // remove the site inside the wallet to revoke it completely.
+  setStatus("DISCONNECTED");
+  setTimeout(()=>{ if(!account) setStatus("NOT CONNECTED"); }, 2200);
+}
+document.querySelectorAll("#connectWallet").forEach(b=>b.addEventListener("click",()=>{
+  if(account) disconnectWallet(); else connectWallet();
+}));
 if(window.ethereum){ window.ethereum.on?.("accountsChanged", accounts => setAccount(accounts[0])); }
 restoreWallet();
 
