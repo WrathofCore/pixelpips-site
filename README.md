@@ -30,3 +30,5 @@ No Pixel Pips deployment address is hard coded before deployment. Official Pixel
 
 ## DMG SFX v3
 The site includes `audio/pixelpips-sfx.js`, a procedural Game Boy-style SFX engine. Every page has an SFX toggle and volume control. Preferences persist in localStorage.
+
+Deploys automatically from `main` via Vercel.
