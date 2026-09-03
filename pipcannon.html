@@ -78,7 +78,7 @@
     <h3>LEADERBOARD</h3>
     <div class="idbox" style="border-top:0" id="positions">
       <b style="font-size:10px">MY POSITIONS</b>
-      <span class="muted">PIPS HELD AND UNCLAIMED REWARDS READ FROM CHAIN AFTER DEPLOY. UNTIL THEN:</span>
+      <div id="posbody"><span class="muted">CONNECT A WALLET TO SEE YOUR PIPS.</span></div>
       <a href="https://pixelpips.cash/pips.html">OPEN MY PIPS &#8594;</a>
     </div>
     <h3 style="border-top:2px solid #2a3a12">TOP RUNS</h3>
@@ -118,6 +118,9 @@
   #sharecard #sc-img{display:block;width:100%;max-width:300px;margin:0 auto 14px;border:2px solid #0e1c38;image-rendering:pixelated}
   #sharecard .sc-tip{margin-top:12px;font-size:9px;line-height:1.5;color:#9db8e8}
   #sharecard .card{max-width:360px}
+  #posbody .prow{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+  #posbody .prow b{color:#e8ff8a;font-weight:400}
+  #posbody .phead{color:#aab78b;letter-spacing:1px;margin-top:5px}
 </style>
 <script>
 'use strict';
@@ -189,6 +192,7 @@ async function restore(){
     if(acc.length){account=acc[0];}
   }catch(e){}
   renderIdentity(); renderBoard();
+  if(typeof loadPositions==='function') loadPositions();
 }
 function idNote(msg){
   const n=document.getElementById('idnote');
@@ -227,7 +231,10 @@ async function signIn(){
     }
     token=d2.token; serverName=d2.name||null;
     try{localStorage.setItem('pipcannon-sess',JSON.stringify({token,addr:account,name:serverName}));}catch(e){}
-    renderIdentity(); renderBoard(); chatState(); pullBoard();
+    renderIdentity(); renderBoard();
+  if(typeof loadPositions==='function') loadPositions(); chatState();
+  if(typeof loadPositions==='function') loadPositions(); pullBoard();
+  if(typeof loadPositions==='function') loadPositions();
   }catch(e){
     idNote('NETWORK ERROR: '+((e&&e.message)||'unknown'));
     if(btn){ btn.disabled=false; btn.textContent='SIGN IN'; }
@@ -236,12 +243,16 @@ async function signIn(){
 function signOut(){
   token=null; serverName=null;
   try{localStorage.removeItem('pipcannon-sess');}catch(e){}
-  renderIdentity(); renderBoard(); chatState();
+  renderIdentity(); renderBoard();
+  if(typeof loadPositions==='function') loadPositions(); chatState();
+  if(typeof loadPositions==='function') loadPositions();
 }
 function disconnect(){
   signOut();
   account=null;
-  renderIdentity(); renderBoard(); chatState();
+  renderIdentity(); renderBoard();
+  if(typeof loadPositions==='function') loadPositions(); chatState();
+  if(typeof loadPositions==='function') loadPositions();
   idNote('DISCONNECTED HERE. YOUR WALLET STILL LISTS THIS SITE UNTIL YOU REMOVE IT THERE.');
 }
 async function claimName(){
@@ -260,7 +271,9 @@ async function claimName(){
     }
     serverName=d.name;
     try{localStorage.setItem('pipcannon-sess',JSON.stringify({token,addr:account,name:serverName}));}catch(e){}
-    renderIdentity(); renderBoard(); chatState();
+    renderIdentity(); renderBoard();
+  if(typeof loadPositions==='function') loadPositions(); chatState();
+  if(typeof loadPositions==='function') loadPositions();
   }catch(e){ idNote('NETWORK ERROR SETTING NAME'); }
 }
 document.getElementById('wallet').onclick=()=>{ if(account) signOut(); else connect(); };
@@ -975,6 +988,66 @@ function loop(){
   requestAnimationFrame(loop);
 }
 const FLOORS=['NVDA','AAPL','TSLA','GME','SPCX','SPY','PLTR','NFLX','RDDT','MSTR'];
+
+// ---------------------------------------------------------------- positions
+// Fill CHAIN.pips in with the deployed PixelPips404 address and this panel
+// starts reading live. Leave it empty and the panel says so instead of
+// inventing numbers. CHAIN.claimableFn is the view that returns a wallet's
+// unclaimed reward total; set it once the contract is verified.
+const CHAIN={
+  rpc:'https://rpc.mainnet.chain.robinhood.com/rpc',
+  chainId:4663,
+  pips:'',                      // e.g. '0xabc…'  PixelPips404
+  claimableFn:'',               // e.g. 'claimableOf(address)' returning uint256
+  explorer:'https://robinhoodchain.blockscout.com/address/'
+};
+function padAddr(a){ return a.toLowerCase().replace(/^0x/,'').padStart(64,'0'); }
+async function ethCall(to,data){
+  const r=await fetch(CHAIN.rpc,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to,data},'latest']})});
+  const j=await r.json();
+  if(j.error) throw new Error(j.error.message||'rpc');
+  return j.result;
+}
+const fmtUnits=(hex,dp=18)=>{
+  if(!hex||hex==='0x') return null;
+  const v=BigInt(hex), base=10n**BigInt(dp);
+  const whole=v/base, frac=(v%base)*10000n/base;
+  return {whole:whole.toString(), frac:String(frac).padStart(4,'0'), raw:v};
+};
+async function loadPositions(){
+  const el=document.getElementById('posbody');
+  if(!el) return;
+  if(!account){ el.innerHTML='<span class="muted">CONNECT A WALLET TO SEE YOUR PIPS.</span>'; return; }
+  if(!CHAIN.pips){
+    el.innerHTML='<span class="muted">PIPS HELD AND UNCLAIMED REWARDS READ FROM CHAIN ONCE THE CONTRACT IS DEPLOYED.</span>';
+    return;
+  }
+  el.innerHTML='<span class="muted">READING CHAIN…</span>';
+  try{
+    // balanceOf(address) = 0x70a08231
+    const bal=await ethCall(CHAIN.pips,'0x70a08231'+padAddr(account));
+    const b=fmtUnits(bal);
+    let rows='<div class="prow"><span>PIPS HELD</span><b>'+(b?b.whole:'0')+'</b></div>';
+    rows+='<div class="prow"><span>FRACTION</span><b>0.'+(b?b.frac:'0000')+'</b></div>';
+    if(CHAIN.claimableFn){
+      try{
+        const sel=window.__claimSel;   // 4-byte selector, computed at startup
+        const c=await ethCall(CHAIN.pips, sel+padAddr(account));
+        const cv=fmtUnits(c);
+        rows+='<div class="prow phead">UNCLAIMED</div>';
+        rows+='<div class="prow"><span>REWARDS</span><b>'+(cv?cv.whole+'.'+cv.frac:'0')+'</b></div>';
+      }catch(e){
+        rows+='<div class="prow phead muted">UNCLAIMED READ FAILED</div>';
+      }
+    }
+    rows+='<a class="muted" href="'+CHAIN.explorer+account+'" target="_blank" rel="noopener">VIEW ON EXPLORER &#8594;</a>';
+    el.innerHTML=rows;
+  }catch(e){
+    el.innerHTML='<span class="muted">CHAIN READ FAILED. TRY AGAIN SHORTLY.</span>';
+  }
+}
+setInterval(()=>{ if(account&&CHAIN.pips) loadPositions(); },60000);
 async function ticker(){
   const track=document.getElementById('tickertrack');
   let items=null;
@@ -1074,6 +1147,7 @@ document.getElementById('chatform').addEventListener('submit',async e=>{
   pollChat();
 });
 verifySession(); pollChat(); setInterval(pollChat,5000);
+loadPositions();
 
 let boardOnline=false;
 async function pullBoard(){
