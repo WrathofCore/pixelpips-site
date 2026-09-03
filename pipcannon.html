@@ -450,31 +450,45 @@ function reset(){
   mode='aim'; power=0; powerDir=1; bounces=0;
   angle=10+Math.floor(Math.random()*51);
   newPip();
-  items=[]; splats=[]; booms=[]; stains=[]; nextSpawnX=200; bag=[]; lastType=''; lastRun=0; cam=0; feet=0; deadMsg=''; flash=0;
+  items=[]; splats=[]; booms=[]; stains=[]; nextSpawnX=200; bag=[]; lastType=''; lastRun=0; prevPair=false; cam=0; feet=0; deadMsg=''; flash=0;
 }
 newPip();
 
 // shuffled bag: every 12 spawns contains a fixed mix, reshuffled each cycle,
 // and no type may appear more than twice in a row.
-const BAG=['tnt','tnt','tnt','tramp','tramp','tramp','spikes','spikes','trap','trap','balloon','balloon'];
-let bag=[], lastType='', lastRun=0;
+// 24 slots: 6 TNT, 9 trampoline, 6 balloon, 2 spikes, 1 flytrap.
+const BAG=['tnt','tnt','tnt','tnt','tnt','tnt','tramp','tramp','tramp','tramp','tramp','tramp','tramp','tramp','tramp','balloon','balloon','balloon','balloon','balloon','balloon','spikes','spikes','trap'];
+let bag=[], lastType='', lastRun=0, prevPair=false;
+function refillBag(){
+  const add=BAG.slice();
+  for(let i=add.length-1;i>0;i--){ const j=(rnd()*(i+1))|0; [add[i],add[j]]=[add[j],add[i]]; }
+  bag=bag.concat(add);
+}
+function pickIdx(blocked){
+  for(let k=bag.length-1;k>=0;k--){ if(blocked===null||bag[k]!==blocked) return k; }
+  return -1;
+}
 function nextType(){
-  for(let guard=0;guard<40;guard++){
-    if(!bag.length){ bag=BAG.slice(); for(let i=bag.length-1;i>0;i--){const j=(rnd()*(i+1))|0;[bag[i],bag[j]]=[bag[j],bag[i]];} }
-    const t=bag.pop();
-    if(t===lastType && lastRun>=2){ bag.unshift(t); continue; }
-    lastRun = (t===lastType) ? lastRun+1 : 1;
-    lastType=t;
-    return t;
-  }
-  return 'tramp';
+  // Two of a kind in a row is allowed; three is not, and a pair is never
+  // followed straight away by another pair. If everything left in the bag is
+  // the blocked type, shuffle in a fresh bag rather than giving up, which is
+  // what previously let streaks run long.
+  if(!bag.length) refillBag();
+  const blocked = (lastRun>=2 || (prevPair && lastRun>=1)) ? lastType : null;
+  let i=pickIdx(blocked);
+  if(i<0){ refillBag(); i=pickIdx(blocked); }
+  if(i<0) i=bag.length-1;
+  const t=bag.splice(i,1)[0];
+  if(t===lastType){ lastRun++; }
+  else { prevPair=(lastRun===2); lastRun=1; lastType=t; }
+  return t;
 }
 function spawnAhead(){
   while(nextSpawnX < cam+VW+400){
     const type=nextType();
     if(type==='balloon') items.push({type,x:nextSpawnX,y:GROUND-64-rnd()*88,used:false});
     else items.push({type,x:nextSpawnX,used:false});
-    nextSpawnX += 90 + rnd()*170;
+    nextSpawnX += 60 + rnd()*120;
   }
 }
 function fire(){
@@ -485,7 +499,7 @@ function fire(){
   runSeed=(Math.random()*4294967295)>>>0;
   runAngle=angle; runPower=Math.round(power*1000)/1000;
   srand(runSeed); pframes=0;
-  items=[]; bag=[]; lastType=''; lastRun=0; nextSpawnX=200;
+  items=[]; bag=[]; lastType=''; lastRun=0; prevPair=false; nextSpawnX=200;
   const sp=8+(runPower/100)*13, a=runAngle*Math.PI/180;
   pip.x=33+Math.cos(a)*62; pip.y=GROUND-24-Math.sin(a)*62;
   pip.vx=Math.cos(a)*sp; pip.vy=-Math.sin(a)*sp;
@@ -817,7 +831,7 @@ function hitItems(){
     }
     if(it.type==='trap'){
       // jaws only: a tight box at the top of the stem, so high shots clear it
-      if(Math.abs(pip.x-(it.x+11))<11 && Math.abs(pip.y-(GROUND-27))<11){
+      if(Math.abs(pip.x-(it.x+11))<11 && Math.abs(pip.y-(GROUND-27))<9){
         it.shut=0.001;                                    // start the chomp
         pip.x=it.x+11; pip.y=GROUND-27; pip.stuck=true;
         splat(pip.x,GROUND-29,40);
@@ -882,7 +896,7 @@ function loop(){
     // safety: a pip that stops making progress, or flies absurdly long, ends the run
     pip.frames++;
     if(Math.abs(pip.vx)<0.4 && Math.abs(pip.vy)<1.2) pip.slow++; else pip.slow=0;
-    if(pip.slow>45 || pip.frames>2700) endRun('STOPPED');
+    if(pip.slow>45 || pip.frames>12000) endRun('STOPPED');
     spawnAhead();
   }
   cam=(mode==='menu')?0:Math.max(0,pip.x-70);

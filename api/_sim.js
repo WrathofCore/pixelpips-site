@@ -3,7 +3,7 @@
 // the client must have reached, so a submitted score can be recomputed rather
 // than trusted.
 const GROUND = 232, PX_PER_FT = 5;
-const BAG = ['tnt','tnt','tnt','tramp','tramp','tramp','spikes','spikes','trap','trap','balloon','balloon'];
+const BAG = ['tnt','tnt','tnt','tnt','tnt','tnt','tramp','tramp','tramp','tramp','tramp','tramp','tramp','tramp','tramp','balloon','balloon','balloon','balloon','balloon','balloon','spikes','spikes','trap'];
 const W = 480, Z = 1.7, VW = Math.ceil(W / Z) + 10;
 
 export function simulate(seed, angle, power) {
@@ -15,20 +15,26 @@ export function simulate(seed, angle, power) {
     return st / 4294967296;
   };
 
-  let bag = [], lastType = '', lastRun = 0;
+  let bag = [], lastType = '', lastRun = 0, prevPair = false;
+  function refillBag() {
+    const add = BAG.slice();
+    for (let i = add.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [add[i], add[j]] = [add[j], add[i]]; }
+    bag = bag.concat(add);
+  }
+  function pickIdx(blocked) {
+    for (let k = bag.length - 1; k >= 0; k--) { if (blocked === null || bag[k] !== blocked) return k; }
+    return -1;
+  }
   function nextType() {
-    for (let guard = 0; guard < 40; guard++) {
-      if (!bag.length) {
-        bag = BAG.slice();
-        for (let i = bag.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [bag[i], bag[j]] = [bag[j], bag[i]]; }
-      }
-      const t = bag.pop();
-      if (t === lastType && lastRun >= 2) { bag.unshift(t); continue; }
-      lastRun = (t === lastType) ? lastRun + 1 : 1;
-      lastType = t;
-      return t;
-    }
-    return 'tramp';
+    if (!bag.length) refillBag();
+    const blocked = (lastRun >= 2 || (prevPair && lastRun >= 1)) ? lastType : null;
+    let i = pickIdx(blocked);
+    if (i < 0) { refillBag(); i = pickIdx(blocked); }
+    if (i < 0) i = bag.length - 1;
+    const t = bag.splice(i, 1)[0];
+    if (t === lastType) { lastRun++; }
+    else { prevPair = (lastRun === 2); lastRun = 1; lastType = t; }
+    return t;
   }
 
   let items = [], nextSpawnX = 200, cam = 0, pframes = 0, feet = 0;
@@ -37,7 +43,7 @@ export function simulate(seed, angle, power) {
       const type = nextType();
       if (type === 'balloon') items.push({ type, x: nextSpawnX, y: GROUND - 64 - rnd() * 88, used: false });
       else items.push({ type, x: nextSpawnX, used: false });
-      nextSpawnX += 90 + rnd() * 170;
+      nextSpawnX += 60 + rnd() * 120;
     }
   }
 
@@ -72,7 +78,7 @@ export function simulate(seed, angle, power) {
         continue;
       }
       if (it.type === 'trap') {
-        if (Math.abs(pip.x - (it.x + 11)) < 11 && Math.abs(pip.y - (GROUND - 27)) < 11) {
+        if (Math.abs(pip.x - (it.x + 11)) < 11 && Math.abs(pip.y - (GROUND - 27)) < 9) {
           pip.x = it.x + 11; pip.y = GROUND - 27; pip.stuck = true;
           end('EATEN');
         }
@@ -108,7 +114,7 @@ export function simulate(seed, angle, power) {
 
     pip.frames++;
     if (Math.abs(pip.vx) < 0.4 && Math.abs(pip.vy) < 1.2) pip.slow++; else pip.slow = 0;
-    if (pip.slow > 45 || pip.frames > 2700) end('STOPPED');
+    if (pip.slow > 45 || pip.frames > 12000) end('STOPPED');
 
     cam = Math.max(0, pip.x - 70);
   }
