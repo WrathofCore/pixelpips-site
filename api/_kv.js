@@ -1,9 +1,21 @@
 // Minimal Upstash Redis REST client. Two env vars, no npm dependency.
 //   KV_REST_API_URL, KV_REST_API_TOKEN
-const URL_ = process.env.KV_REST_API_URL;
-const TOKEN = process.env.KV_REST_API_TOKEN;
+// Vercel's own KV integration sets KV_REST_API_*, while the Upstash
+// marketplace integration sets UPSTASH_REDIS_REST_*. Accept either, plus
+// REDIS_* which some setups use, so whichever one gets connected just works.
+const pick = (...names) => { for (const n of names) { const v = process.env[n]; if (v) return v; } return undefined; };
+const URL_  = pick('KV_REST_API_URL',   'UPSTASH_REDIS_REST_URL',   'REDIS_REST_API_URL',   'STORAGE_REST_API_URL');
+const TOKEN = pick('KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN', 'REDIS_REST_API_TOKEN', 'STORAGE_REST_API_TOKEN');
 
 export const configured = () => Boolean(URL_ && TOKEN);
+
+// Which env var names are actually present. Values are never exposed.
+export const envReport = () => ({
+  url: ['KV_REST_API_URL','UPSTASH_REDIS_REST_URL','REDIS_REST_API_URL','STORAGE_REST_API_URL'].filter(n => process.env[n]),
+  token: ['KV_REST_API_TOKEN','UPSTASH_REDIS_REST_TOKEN','REDIS_REST_API_TOKEN','STORAGE_REST_API_TOKEN'].filter(n => process.env[n]),
+  admin: Boolean(process.env.ADMIN_TOKEN),
+  redisLike: Object.keys(process.env).filter(k => /REDIS|KV_|UPSTASH|STORAGE/i.test(k)).sort()
+});
 
 export async function redis(...cmd) {
   if (!configured()) throw new Error('kv-not-configured');
