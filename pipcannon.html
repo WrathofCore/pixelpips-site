@@ -6,6 +6,7 @@
 <title>PIP CANNON</title>
 <meta name="description" content="Load a pip. Send it. Chain TNT, trampolines and balloon bombs for distance. A Pixel Pips arcade game.">
 <meta property="og:type" content="website"><meta property="og:site_name" content="PIXEL PIPS"><meta property="og:title" content="PIP CANNON"><meta property="og:description" content="Load a pip. Send it. Chain TNT, trampolines and balloon bombs for distance."><meta property="og:url" content="https://pixelpips.cash/pipcannon.html"><meta property="og:image" content="https://img.syst3mc0r3.art/pixelpips/activated/420.png"><meta name="twitter:card" content="summary"><meta name="twitter:site" content="@PixelPips404"><meta name="twitter:title" content="PIP CANNON"><meta name="twitter:description" content="Load a pip. Send it. Chain TNT, trampolines and balloon bombs for distance."><meta name="twitter:image" content="https://img.syst3mc0r3.art/pixelpips/activated/420.png">
+<link rel="icon" href="https://pixelpips.cash/favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="https://pixelpips.cash/favicon-32.png"><link rel="icon" type="image/png" sizes="192x192" href="https://pixelpips.cash/favicon-192.png"><link rel="apple-touch-icon" href="https://pixelpips.cash/apple-touch-icon.png">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap');
   html,body{margin:0;min-height:100%;background:#0b0d0b;color:#c8f06a;font-family:'Space Mono',monospace;overflow:auto;user-select:none;-webkit-user-select:none}
@@ -142,26 +143,28 @@ let best=0, runs=[], names={};
 try{const s=JSON.parse(localStorage.getItem('pipcannon5')||'{}'); best=s.best||0; runs=s.runs||[]; names=s.names||{};}catch(e){}
 const persist=()=>{try{localStorage.setItem('pipcannon5',JSON.stringify({best,runs,names}))}catch(e){}};
 
-let account=null;
+let account=null, token=null, serverName=null;
+try{const t=JSON.parse(localStorage.getItem('pipcannon-sess')||'{}'); if(t.token&&t.addr){token=t.token;serverName=t.name||null;}}catch(e){}
+const authHeaders=()=>token?{'Content-Type':'application/json','Authorization':'Bearer '+token}:{'Content-Type':'application/json'};
 const short=a=>a.slice(0,6)+'...'+a.slice(-4);
-function myName(){ return account ? (names[account.toLowerCase()]||null) : null; }
+function myName(){ return serverName || (account ? (names[account.toLowerCase()]||null) : null); }
 function renderIdentity(){
   const w=document.getElementById('wallet'), box=document.getElementById('idbox');
   if(!account){
     w.textContent='CONNECT WALLET';
     box.innerHTML='<span class="muted">NOT CONNECTED. WALLET IS OPTIONAL. IT ONLY GATES THE LEADERBOARD.</span><button class="mini" id="bconnect">CONNECT WALLET</button>';
     document.getElementById('bconnect').onclick=connect;
+  }else if(!token){
+    w.textContent=short(account);
+    box.innerHTML='<span>'+short(account)+'</span><span class="muted">SIGN A FREE MESSAGE TO PROVE THIS WALLET IS YOURS. NO TRANSACTION.</span><button class="mini" id="bsign">SIGN IN</button>';
+    document.getElementById('bsign').onclick=signIn;
   }else if(!myName()){
     w.textContent=short(account);
-    box.innerHTML='<span>'+short(account)+'</span><input id="nameinput" placeholder="PICK A NAME (3-14)" maxlength="14"><button class="mini" id="bname">SET NAME</button>';
-    document.getElementById('bname').onclick=()=>{
-      const v=document.getElementById('nameinput').value.trim().toUpperCase().replace(/[^A-Z0-9_]/g,'');
-      if(v.length<3) return;
-      names[account.toLowerCase()]=v; persist(); renderIdentity(); renderBoard();
-    };
+    box.innerHTML='<span>'+short(account)+' <span class="muted">SIGNED IN</span></span><input id="nameinput" placeholder="PICK A NAME (3-14)" maxlength="14"><button class="mini" id="bname">SET NAME</button>';
+    document.getElementById('bname').onclick=claimName;
   }else{
     w.textContent=myName();
-    box.innerHTML='<span>'+myName()+' <span class="muted">'+short(account)+'</span></span>';
+    box.innerHTML='<span>'+myName()+' <span class="muted">'+short(account)+'</span></span><span class="muted">SIGNED IN. SCORES ARE VERIFIED SERVER SIDE.</span>';
   }
   if(typeof chatState==='function') chatState();
 }
@@ -180,8 +183,37 @@ async function restore(){
   }catch(e){}
   renderIdentity(); renderBoard();
 }
+async function signIn(){
+  if(!account||!window.ethereum) return;
+  const box=document.getElementById('idbox');
+  try{
+    const r1=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addr:account})});
+    const d1=await r1.json();
+    if(!d1.ok){ box.innerHTML='<span class="muted">SIGN IN UNAVAILABLE. SERVER HAS NO STORAGE YET.</span>'; return; }
+    const sig=await window.ethereum.request({method:'personal_sign',params:[d1.message,account]});
+    const r2=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({addr:account,nonce:d1.nonce,sig})});
+    const d2=await r2.json();
+    if(!d2.ok){ box.innerHTML='<span class="muted">SIGNATURE REJECTED.</span>'; return; }
+    token=d2.token; serverName=d2.name||null;
+    try{localStorage.setItem('pipcannon-sess',JSON.stringify({token,addr:account,name:serverName}));}catch(e){}
+    renderIdentity(); renderBoard(); chatState();
+  }catch(e){ renderIdentity(); }
+}
+async function claimName(){
+  const el=document.getElementById('nameinput');
+  const v=el.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g,'');
+  if(v.length<3) return;
+  try{
+    const r=await fetch('/api/name',{method:'POST',headers:authHeaders(),body:JSON.stringify({name:v})});
+    const d=await r.json();
+    if(!d.ok){ el.value=''; el.placeholder = d.error==='name-taken'?'TAKEN, TRY ANOTHER':'REJECTED'; return; }
+    serverName=d.name;
+    try{localStorage.setItem('pipcannon-sess',JSON.stringify({token,addr:account,name:serverName}));}catch(e){}
+    renderIdentity(); renderBoard(); chatState();
+  }catch(e){}
+}
 document.getElementById('wallet').onclick=connect;
-if(window.ethereum&&window.ethereum.on) window.ethereum.on('accountsChanged',a=>{account=a[0]||null;renderIdentity();renderBoard();});
+if(window.ethereum&&window.ethereum.on) window.ethereum.on('accountsChanged',a=>{account=a[0]||null;token=null;serverName=null;try{localStorage.removeItem('pipcannon-sess');}catch(e){}renderIdentity();renderBoard();});
 
 let globalBoard=null;
 function renderBoard(){
@@ -193,7 +225,7 @@ function renderBoard(){
     return;
   }
   if(!runs.length){
-    el.innerHTML='<div class="muted">'+(account&&myName()?'NO RANKED RUNS YET. FIRE.':'CONNECT WALLET AND SET A NAME TO RANK. RUNS WITHOUT A WALLET ARE NOT RECORDED.')+'</div>';
+    el.innerHTML='<div class="muted">'+(myName()?'NO RANKED RUNS YET. FIRE.':'CONNECT A WALLET, SIGN IN AND SET A NAME TO RANK.')+'</div>';
     return;
   }
   el.innerHTML=runs.map((r,i)=>'<div class="row"><span>'+(i+1)+'. '+r.name+'</span><span>'+r.ft+'<span class="muted"> FT</span></span></div>').join('');
@@ -203,11 +235,11 @@ function recordRun(ft,how){
   if(ft>best){best=ft;}
   syncShare();
   hud.textContent='BEST '+best+' FT';
-  if(account&&myName()){
-    runs.push({ft,how,name:myName(),addr:account.toLowerCase()});
+  if(myName()){
+    runs.push({ft,how,name:myName()});
     runs.sort((a,b)=>b.ft-a.ft); runs=runs.slice(0,10);
     renderBoard();
-    if(typeof pushScore==='function') pushScore(ft);
+    if(typeof pushScore==='function') pushScore();
   }
   persist();
 }
@@ -331,6 +363,18 @@ function quoteFor(ft){
   return 'OFF THE CHARTS. TOUCH GRASS.';
 }
 let paused=false, helpOpen=false;
+// Deterministic RNG. Every value that can change where the pip lands comes from
+// here, so the server can replay a run from (seed, angle, power) and get the
+// exact same distance. Visual-only randomness keeps using Math.random.
+let rngState=1;
+function srand(seed){ rngState=(seed>>>0)||1; }
+function rnd(){
+  rngState^=rngState<<13; rngState>>>=0;
+  rngState^=rngState>>17;
+  rngState^=rngState<<5;  rngState>>>=0;
+  return rngState/4294967296;
+}
+let runSeed=0, runAngle=0, runPower=0, pframes=0;
 let mode='menu', angle=10+Math.floor(Math.random()*51), power=0, powerDir=1, lastThud=0, bounces=0, newBest=false;
 let items=[], splats=[], booms=[], stains=[], nextSpawnX=0, cam=0, feet=0, deadMsg='', tick=0, flash=0;
 
@@ -352,7 +396,7 @@ const BAG=['tnt','tnt','tnt','tramp','tramp','tramp','spikes','spikes','trap','t
 let bag=[], lastType='', lastRun=0;
 function nextType(){
   for(let guard=0;guard<40;guard++){
-    if(!bag.length){ bag=BAG.slice(); for(let i=bag.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[bag[i],bag[j]]=[bag[j],bag[i]];} }
+    if(!bag.length){ bag=BAG.slice(); for(let i=bag.length-1;i>0;i--){const j=(rnd()*(i+1))|0;[bag[i],bag[j]]=[bag[j],bag[i]];} }
     const t=bag.pop();
     if(t===lastType && lastRun>=2){ bag.unshift(t); continue; }
     lastRun = (t===lastType) ? lastRun+1 : 1;
@@ -364,9 +408,9 @@ function nextType(){
 function spawnAhead(){
   while(nextSpawnX < cam+VW+400){
     const type=nextType();
-    if(type==='balloon') items.push({type,x:nextSpawnX,y:GROUND-64-Math.random()*88,used:false});
+    if(type==='balloon') items.push({type,x:nextSpawnX,y:GROUND-64-rnd()*88,used:false});
     else items.push({type,x:nextSpawnX,used:false});
-    nextSpawnX += 90 + Math.random()*170;
+    nextSpawnX += 90 + rnd()*170;
   }
 }
 function fire(){
@@ -374,7 +418,11 @@ function fire(){
   if(mode==='menu'){ if(helpOpen){helpOpen=false;return;} SND.menu(); reset(); return; }
   if(mode==='dead'){ reset(); return; }
   if(mode!=='aim') return;
-  const sp=8+(power/100)*13, a=angle*Math.PI/180;
+  runSeed=(Math.random()*4294967295)>>>0;
+  runAngle=angle; runPower=Math.round(power*1000)/1000;
+  srand(runSeed); pframes=0;
+  items=[]; bag=[]; lastType=''; lastRun=0; nextSpawnX=200;
+  const sp=8+(runPower/100)*13, a=runAngle*Math.PI/180;
   pip.x=33+Math.cos(a)*62; pip.y=GROUND-24-Math.sin(a)*62;
   pip.vx=Math.cos(a)*sp; pip.vy=-Math.sin(a)*sp;
   mode='fly'; paused=false; flash=8; SND.fire();
@@ -665,7 +713,7 @@ function drawItem(it){
     ctx.restore();
   }else if(it.type==='balloon'){
     if(it.used) return;
-    const by=it.y+Math.sin(tick/22+x)*2;
+    const by=it.y+Math.sin(pframes/22+x)*2;
     // red balloon with knot and highlight
     ctx.fillStyle='#d92b2b';
     ctx.beginPath(); ctx.ellipse(x+9,by,7,8,0,0,7); ctx.fill();
@@ -693,12 +741,12 @@ function hitItems(){
   for(const it of items){
     if(it.type==='balloon'){
       if(it.used) continue;
-      const by=it.y+Math.sin(tick/22+it.x)*2;
+      const by=it.y+Math.sin(pframes/22+it.x)*2;
       if(Math.abs(pip.x-(it.x+9))<22 && pip.y>by-10 && pip.y<by+28){
         it.used=true;
         boomFx(it.x+9,by+8);
-        pip.vy=-(12+Math.random()*5);
-        pip.vx=Math.max(pip.vx*0.9,4)+3+Math.random()*3;
+        pip.vy=-(12+rnd()*5);
+        pip.vx=Math.max(pip.vx*0.9,4)+3+rnd()*3;
         SND.boom();
       }
       continue;
@@ -721,8 +769,8 @@ function hitItems(){
     if(it.type==='tnt' && !it.used && pip.y>GROUND-22){
       it.used=true;
       boomFx(pip.x,GROUND-10);
-      pip.vx=Math.max(pip.vx,5)+4+Math.random()*4;
-      pip.vy=-(13+Math.random()*5);
+      pip.vx=Math.max(pip.vx,5)+4+rnd()*4;
+      pip.vy=-(13+rnd()*5);
       splat(pip.x,GROUND-8,16); smear(pip.x,5,20); SND.boom();
     }else if(it.type==='tramp' && pip.vy>0 && pip.y>GROUND-18){
       pip.y=GROUND-18;
@@ -749,6 +797,7 @@ function loop(){
     if(power<=0){power=0;powerDir=1;}
   }
   if(mode==='fly' && !paused){
+    pframes++;
     pip.vy+=0.31;
     pip.x+=pip.vx; pip.y+=pip.vy;
     pip.rot+=pip.vx*0.06;
@@ -762,7 +811,7 @@ function loop(){
       const now=performance.now();
       if(impact>1.6 && now-lastThud>110){ SND.slap(impact); lastThud=now; }
       if(bounces===2) SND.cry2();
-      pip.vy*=-(0.55+Math.random()*0.14);    // bouncier + a bit random
+      pip.vy*=-(0.55+rnd()*0.14);    // bouncier + a bit random
       pip.vx*=0.972;
       if(Math.abs(pip.vy)<0.9 && Math.abs(pip.vx)<0.5) endRun('STOPPED');
     }
@@ -828,7 +877,7 @@ function loop(){
       ['BALLOON','FLY INTO THE BOMB FOR A MID AIR BOOST'],
       ['SPIKES','RUN ENDS'],
       ['FLYTRAP','RUN ENDS'],
-      ['RANK','CONNECT A WALLET AND SET A NAME']
+      ['RANK','CONNECT, SIGN IN, SET A NAME']
     ];
     lines.forEach(([k,v],i)=>{
       const y=58+i*17;
@@ -909,9 +958,12 @@ function chatState(){
     chatinput.placeholder='CHAT OFFLINE';
     return;
   }
-  const ready=!!(account&&myName());
+  const ready=!!(token&&myName());
   chatinput.disabled=!ready; chatsend.disabled=!ready;
-  chatinput.placeholder = ready ? 'SAY SOMETHING' : 'CONNECT WALLET AND SET A NAME';
+  chatinput.placeholder = ready ? 'SAY SOMETHING'
+    : !account ? 'CONNECT WALLET'
+    : !token ? 'SIGN IN TO CHAT'
+    : 'SET A NAME TO CHAT';
 }
 function renderChat(msgs){
   if(!msgs.length){ chatlog.innerHTML='<div class="muted">NO MESSAGES YET.</div>'; return; }
@@ -940,13 +992,13 @@ document.getElementById('chatform').addEventListener('submit',async e=>{
   if(!text||!account||!myName()) return;
   chatinput.value=''; chatsend.disabled=true;
   try{
-    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({addr:account,name:myName(),text})});
+    const r=await fetch('/api/chat',{method:'POST',headers:authHeaders(),body:JSON.stringify({text})});
     const d=await r.json();
     if(!d.ok){
       chatNotice=Date.now()+3500;
       chatinput.placeholder = d.error==='slow-down' ? 'TOO FAST, WAIT A MOMENT'
-                            : d.error==='name-taken' ? 'NAME BELONGS TO ANOTHER WALLET'
+                            : d.error==='sign-in-required' ? 'SIGN IN AGAIN'
+                            : d.error==='banned' ? 'THIS WALLET IS BANNED'
                             : 'MESSAGE REJECTED';
       chatinput.value=text;               // give the text back so nothing is lost
       setTimeout(()=>{chatNotice=0;chatState();},3600);
@@ -971,11 +1023,11 @@ async function pullBoard(){
     else { boardOnline=false; renderBoard(); }
   }catch(e){ boardOnline=false; renderBoard(); }
 }
-async function pushScore(ft){
-  if(!account||!myName()||!boardOnline) return;
+async function pushScore(){
+  if(!token||!myName()||!boardOnline||!runSeed) return;
   try{
-    const r=await fetch('/api/board',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({addr:account,name:myName(),ft})});
+    const r=await fetch('/api/board',{method:'POST',headers:authHeaders(),
+      body:JSON.stringify({seed:runSeed,angle:runAngle,power:runPower})});
     const d=await r.json();
     if(d.ok){ globalBoard=d.board||[]; renderBoard(); }
   }catch(e){}

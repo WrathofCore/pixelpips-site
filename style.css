@@ -28,6 +28,11 @@
 
 .special-art img{display:block;width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
 
-.game-thumb{display:block;margin:0 0 18px;border:2px solid var(--line);line-height:0;background:#0b0d0b}
-.game-thumb img{display:block;width:100%;height:auto;image-rendering:pixelated}
-.game-thumb:hover{border-color:var(--accent)}
+.game-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.game-tile{display:flex;flex-direction:column;border:2px solid var(--line);background:var(--panel);text-decoration:none;color:inherit}
+.game-tile:hover{border-color:var(--accent);text-decoration:none}
+.game-tile img{display:block;width:100%;height:auto;image-rendering:pixelated;border-bottom:2px solid var(--line)}
+.game-tile-body{padding:11px 12px;display:flex;flex-direction:column;gap:6px}
+.game-tile-body b{font-size:12px;letter-spacing:1px}
+.game-tile.empty{opacity:.5}
+.game-tile-slot{aspect-ratio:480/276;display:flex;align-items:center;justify-content:center;background:#1b2214;border-bottom:2px solid var(--line);font-size:10px;color:var(--dim);letter-spacing:2px}
