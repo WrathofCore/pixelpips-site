@@ -611,7 +611,15 @@ cv.addEventListener('pointerdown',e=>{
   const r=cv.getBoundingClientRect(), mx=(e.clientX-r.left)/r.width*W, my=(e.clientY-r.top)/r.height*H;
   if(!helpOpen && mx>W/2-58 && mx<W/2+58 && my>224 && my<242){ helpOpen=true; beep(660,60,0.04); e.stopPropagation(); }
 },true);
+// Keys only drive the game when the player is not typing. Without this, a
+// space in the chat box or the name field fires or pauses the cannon.
+function isTyping(el){
+  if(!el) return false;
+  const t=(el.tagName||'').toUpperCase();
+  return t==='INPUT' || t==='TEXTAREA' || t==='SELECT' || el.isContentEditable;
+}
 document.addEventListener('keydown',e=>{
+  if(isTyping(e.target)||isTyping(document.activeElement)) return;
   if(e.code==='ArrowUp'){nudge(3);e.preventDefault();}
   if(e.code==='ArrowDown'){nudge(-3);e.preventDefault();}
   if(e.code==='Space'){fire();e.preventDefault();}
