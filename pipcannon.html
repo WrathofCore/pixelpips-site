@@ -29,6 +29,9 @@
   #chatform{display:flex;border-top:2px solid #2a3a12}
   #chatform input{flex:1;min-width:0;background:#0b0d0b;border:0;color:#c8f06a;font-family:'Space Mono',monospace;padding:8px;font-size:11px}
   #chatform button{padding:8px 10px;font-size:11px}
+  #chatlog .m{margin:0 0 7px;line-height:1.45;word-wrap:break-word}
+  #chatlog .m b{color:#e8ff8a}
+  #chatlog .m span{color:#aab78b}
   .idbox{padding:8px 10px;border-top:2px solid #2a3a12;font-size:10px;display:flex;flex-direction:column;gap:6px}
   .idbox input{background:#0b0d0b;border:1px solid #2a3a12;color:#c8f06a;font-family:'Space Mono',monospace;padding:6px;font-size:11px;width:100%;box-sizing:border-box}
   .idbox a{color:#c8f06a}
@@ -36,11 +39,21 @@
 </style>
 </head>
 <body>
+<nav id="sitenav">
+  <a class="brand" href="https://pixelpips.cash/index.html">&#9664; PIXEL PIPS</a>
+  <a href="https://pixelpips.cash/games.html">GAMES</a>
+  <a href="https://pixelpips.cash/pips.html">MY PIPS</a>
+  <a href="https://pixelpips.cash/market.html">MARKET</a>
+  <a href="https://pixelpips.cash/floors.html">FLOORS</a>
+  <a href="https://pixelpips.cash/rewards.html">REWARDS</a>
+  <a href="https://pixelpips.cash/specials.html">SPECIALS</a>
+  <a href="https://pixelpips.cash/docs.html">DOCS</a>
+</nav>
 <div id="page">
   <div class="panel" id="chat">
     <h3>CHAT</h3>
-    <div class="body" id="chatlog"><div class="muted">GLOBAL CHAT IS OFFLINE. IT NEEDS A BACKEND AND ONE IS NOT DEPLOYED. NO FAKE MESSAGES.</div></div>
-    <form id="chatform"><input id="chatinput" placeholder="OFFLINE" disabled maxlength="120"><button disabled>SEND</button></form>
+    <div class="body" id="chatlog"><div class="muted">CONNECTING…</div></div>
+    <form id="chatform"><input id="chatinput" placeholder="CONNECTING…" disabled maxlength="200"><button id="chatsend" disabled>SEND</button></form>
   </div>
   <div id="game">
     <header>
@@ -90,6 +103,10 @@
   #tickertrack span b{color:#e8ff8a}
   @keyframes tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}
   #page{padding-bottom:44px}
+  #sitenav{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:10px 14px;border-bottom:2px solid #2a3a12;background:#0e120c;font-size:10px;letter-spacing:1px}
+  #sitenav a{color:#aab78b;text-decoration:none}
+  #sitenav a:hover{color:#c8f06a;text-decoration:underline}
+  #sitenav .brand{color:#c8f06a;font-family:'Press Start 2P',monospace;font-size:9px;margin-right:6px}
   #sharecard{display:none;position:fixed;inset:0;background:rgba(6,10,18,0.72);align-items:center;justify-content:center;z-index:20}
   #sharecard .card{background:#132a52;border:3px solid #ffd94a;padding:20px 24px;text-align:center;max-width:330px}
   #sharecard .sc-top{font-family:'Press Start 2P',monospace;font-size:9px;color:#ffd94a;margin-bottom:12px}
@@ -146,7 +163,7 @@ function renderIdentity(){
     w.textContent=myName();
     box.innerHTML='<span>'+myName()+' <span class="muted">'+short(account)+'</span></span>';
   }
-  document.getElementById('chatinput').placeholder = account&&myName() ? 'OFFLINE UNTIL BACKEND' : 'OFFLINE';
+  if(typeof chatState==='function') chatState();
 }
 async function connect(){
   if(!window.ethereum){ document.getElementById('idbox').innerHTML='<span class="muted">NO EVM WALLET DETECTED.</span>'; return; }
@@ -166,8 +183,15 @@ async function restore(){
 document.getElementById('wallet').onclick=connect;
 if(window.ethereum&&window.ethereum.on) window.ethereum.on('accountsChanged',a=>{account=a[0]||null;renderIdentity();renderBoard();});
 
+let globalBoard=null;
 function renderBoard(){
   const el=document.getElementById('lb');
+  if(typeof boardOnline!=='undefined' && boardOnline && globalBoard){
+    if(!globalBoard.length){ el.innerHTML='<div class="muted">NO RANKED RUNS YET. BE FIRST.</div>'; return; }
+    const me=myName();
+    el.innerHTML=globalBoard.map((r,i)=>'<div class="row"><span>'+(i+1)+'. '+(r.name===me?'<b>'+r.name+'</b>':r.name)+'</span><span>'+r.ft+'<span class="muted"> FT</span></span></div>').join('');
+    return;
+  }
   if(!runs.length){
     el.innerHTML='<div class="muted">'+(account&&myName()?'NO RANKED RUNS YET. FIRE.':'CONNECT WALLET AND SET A NAME TO RANK. RUNS WITHOUT A WALLET ARE NOT RECORDED.')+'</div>';
     return;
@@ -183,6 +207,7 @@ function recordRun(ft,how){
     runs.push({ft,how,name:myName(),addr:account.toLowerCase()});
     runs.sort((a,b)=>b.ft-a.ft); runs=runs.slice(0,10);
     renderBoard();
+    if(typeof pushScore==='function') pushScore(ft);
   }
   persist();
 }
@@ -868,6 +893,94 @@ async function ticker(){
   track.innerHTML=half+half;
 }
 ticker(); setInterval(ticker,60000);
+
+// ---------------- global chat + leaderboard (needs the /api routes) ----------------
+let chatOnline=false, lastChatKey='';
+const chatlog=document.getElementById('chatlog');
+const chatinput=document.getElementById('chatinput');
+const chatsend=document.getElementById('chatsend');
+const esc=t=>t.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let chatNotice=0;                       // while set, an error message owns the placeholder
+function chatState(){
+  if(chatNotice>Date.now()) return;
+  if(!chatOnline){
+    chatinput.disabled=true; chatsend.disabled=true;
+    chatinput.placeholder='CHAT OFFLINE';
+    return;
+  }
+  const ready=!!(account&&myName());
+  chatinput.disabled=!ready; chatsend.disabled=!ready;
+  chatinput.placeholder = ready ? 'SAY SOMETHING' : 'CONNECT WALLET AND SET A NAME';
+}
+function renderChat(msgs){
+  if(!msgs.length){ chatlog.innerHTML='<div class="muted">NO MESSAGES YET.</div>'; return; }
+  const key=msgs.map(m=>m.ts).join(',');
+  if(key===lastChatKey) return;
+  lastChatKey=key;
+  const stick=chatlog.scrollTop+chatlog.clientHeight>=chatlog.scrollHeight-24;
+  chatlog.innerHTML=msgs.map(m=>'<div class="m"><b>'+esc(m.n)+'</b> <span>'+esc(m.t)+'</span></div>').join('');
+  if(stick) chatlog.scrollTop=chatlog.scrollHeight;
+}
+async function pollChat(){
+  try{
+    const r=await fetch('/api/chat',{cache:'no-store'});
+    const d=await r.json();
+    if(!d.ok){ chatOnline=false; chatlog.innerHTML='<div class="muted">CHAT IS OFFLINE. THE SERVER HAS NO STORAGE CONFIGURED.</div>'; }
+    else { chatOnline=true; renderChat(d.messages||[]); }
+  }catch(e){
+    chatOnline=false;
+    chatlog.innerHTML='<div class="muted">CHAT IS OFFLINE. NO SERVER ON THIS HOST.</div>';
+  }
+  chatState();
+}
+document.getElementById('chatform').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const text=chatinput.value.trim();
+  if(!text||!account||!myName()) return;
+  chatinput.value=''; chatsend.disabled=true;
+  try{
+    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({addr:account,name:myName(),text})});
+    const d=await r.json();
+    if(!d.ok){
+      chatNotice=Date.now()+3500;
+      chatinput.placeholder = d.error==='slow-down' ? 'TOO FAST, WAIT A MOMENT'
+                            : d.error==='name-taken' ? 'NAME BELONGS TO ANOTHER WALLET'
+                            : 'MESSAGE REJECTED';
+      chatinput.value=text;               // give the text back so nothing is lost
+      setTimeout(()=>{chatNotice=0;chatState();},3600);
+    }
+  }catch(e){
+    chatNotice=Date.now()+3500;
+    chatinput.placeholder='SEND FAILED';
+    chatinput.value=text;
+    setTimeout(()=>{chatNotice=0;chatState();},3600);
+  }
+  chatsend.disabled=false;
+  pollChat();
+});
+pollChat(); setInterval(pollChat,5000);
+
+let boardOnline=false;
+async function pullBoard(){
+  try{
+    const r=await fetch('/api/board',{cache:'no-store'});
+    const d=await r.json();
+    if(d.ok){ boardOnline=true; globalBoard=d.board||[]; renderBoard(); }
+    else { boardOnline=false; renderBoard(); }
+  }catch(e){ boardOnline=false; renderBoard(); }
+}
+async function pushScore(ft){
+  if(!account||!myName()||!boardOnline) return;
+  try{
+    const r=await fetch('/api/board',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({addr:account,name:myName(),ft})});
+    const d=await r.json();
+    if(d.ok){ globalBoard=d.board||[]; renderBoard(); }
+  }catch(e){}
+}
+pullBoard(); setInterval(pullBoard,20000);
 document.getElementById('sc-close').onclick=()=>{document.getElementById('sharecard').style.display='none';};
 document.getElementById('sc-post').onclick=()=>{
   document.getElementById('sharecard').style.display='none';
