@@ -444,7 +444,7 @@ function quoteFor(ft){
   if(ft<5000) return 'LOCKED. THE ANTENNA IS GLOWING.';
   return 'OFF THE CHARTS. TOUCH GRASS.';
 }
-let paused=false, helpOpen=false;
+let paused=false, helpOpen=false, pauseOpen=false;
 // Deterministic RNG. Every value that can change where the pip lands comes from
 // here, so the server can replay a run from (seed, angle, power) and get the
 // exact same distance. Visual-only randomness keeps using Math.random.
@@ -514,10 +514,11 @@ function fire(){
     if(race.phase==='aim'){ raceLock(); return; }
     if(race.phase==='done'){ race=null; mode='menu'; return; }
     if(race.phase==='fly' && race.pips[race.mySlot].dead){ raceCycleSpectate(); return; }
-    return;                                   // no pausing a race
+    if(race.phase==='fly'){ togglePause(); return; }
+    return;
   }
-  if(mode==='fly'){ paused=!paused; beep(paused?300:520,60,0.04); return; }
-  if(mode==='menu'){ if(helpOpen){helpOpen=false;return;} SND.menu(); reset(); return; }
+  if(mode==='fly'){ togglePause(); return; }
+  if(mode==='menu'){ if(helpOpen) helpOpen=false; return; }   // menu is buttons only now
   if(mode==='dead'){ reset(); return; }
   if(mode!=='aim') return;
   runSeed=(Math.random()*4294967295)>>>0;
@@ -529,6 +530,26 @@ function fire(){
   pip.vx=Math.cos(a)*sp; pip.vy=-Math.sin(a)*sp;
   mode='fly'; paused=false; flash=8; SND.fire();
   setTimeout(()=>{if(mode==='fly')SND.cry();},320);
+}
+// An online race never stops running: the outcome is already fixed by the
+// inputs locked before the countdown closed, and the server replays it whatever
+// this client does. So online the overlay is just an overlay. Bot races and solo
+// runs are entirely local, so those genuinely freeze.
+function togglePause(){
+  if(mode==='race'){
+    if(!race || race.phase!=='fly') return;
+    pauseOpen=!pauseOpen;
+    if(!race.online) paused=pauseOpen;
+  } else if(mode==='fly'){
+    pauseOpen=!pauseOpen; paused=pauseOpen;
+  } else return;
+  beep(pauseOpen?300:520,60,0.04);
+}
+function closePause(){ pauseOpen=false; paused=false; }
+function exitToMenu(){
+  closePause();
+  if(mode==='race'){ if(race && race.online) onlineSettle(); race=null; }
+  mode='menu'; helpOpen=false; SND.menu();
 }
 function endRun(msg){
   if(mode!=='fly') return;
@@ -597,13 +618,40 @@ function boomFx(x,y){ booms.push({x,y,r:3,life:12}); }
 // reloads after a run. Touch gets a full scheme instead of on-screen buttons:
 // drag anywhere to aim, lift to fire, tap mid-flight to pause.
 let touchAim=null;
+// Menu and pause buttons are laid out once here and both drawn and hit tested
+// from the same table, so a moved button cannot end up with a stale hitbox.
+const MENU_BTNS=[
+  {id:'solo',  label:'SOLO',         x:W/2-120, y:206, w:116, h:16, fill:'#132a52', line:'#9feaff'},
+  {id:'online',label:'ONLINE RACE',  x:W/2+4,   y:206, w:116, h:16, fill:'#1a3a2a', line:'#8cff6b'},
+  {id:'bots',  label:'RACE VS BOTS', x:W/2-120, y:228, w:116, h:16, fill:'#3a1a52', line:'#ff9dff'},
+  {id:'help',  label:'HOW TO PLAY',  x:W/2+4,   y:228, w:116, h:16, fill:'#132a52', line:'#9feaff'}
+];
+function pauseBtns(){
+  const online = (mode==='race' && race && race.online);
+  const mid = [ online
+    ? {id:'leave',   label:'LEAVE RACE', fill:'#3a1a1a', line:'#ff8c8c'}
+    : {id:'restart', label:'RESTART',    fill:'#3a1a52', line:'#ff9dff'} ];
+  const rows=[{id:'resume',label:'RESUME',fill:'#1a3a2a',line:'#8cff6b'},...mid,
+              {id:'menu',label:'MAIN MENU',fill:'#132a52',line:'#9feaff'}];
+  return rows.map((b,i)=>({...b, x:W/2-58, y:H/2-30+i*22, w:116, h:16}));
+}
+function drawBtns(list){
+  list.forEach(b=>{
+    ctx.fillStyle=b.fill; ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.strokeStyle=b.line; ctx.lineWidth=1; ctx.strokeRect(b.x+0.5,b.y+0.5,b.w-1,b.h-1);
+    ctx.font='7px '+P2; ctx.fillStyle=b.line;
+    ctx.fillText(b.label, b.x+(b.w-ctx.measureText(b.label).width)/2, b.y+11);
+  });
+}
+function hitBtn(list,mx,my){ return list.find(b=>mx>b.x&&mx<b.x+b.w&&my>b.y&&my<b.y+b.h)||null; }
 function canvasPt(e){
   const r=cv.getBoundingClientRect();
   return {x:(e.clientX-r.left)/r.width*W, y:(e.clientY-r.top)/r.height*H};
 }
 cv.addEventListener('pointerdown',e=>{
   const touch = e.pointerType==='touch' || e.pointerType==='pen';
-  if(mode==='menu'||mode==='dead'){ fire(); return; }
+  if(mode==='menu'){ if(helpOpen) helpOpen=false; return; }
+  if(mode==='dead'){ fire(); return; }
   if(!touch) return;
   if(mode==='race'&&(race.phase==='done'||(race.phase==='fly'&&race.pips[race.mySlot].dead))){ fire(); return; }
   if(mode==='fly'){ fire(); return; }
@@ -636,9 +684,29 @@ function nudge(d){
 cv.addEventListener('pointerdown',e=>{
   if(mode!=='menu') return;
   const r=cv.getBoundingClientRect(), mx=(e.clientX-r.left)/r.width*W, my=(e.clientY-r.top)/r.height*H;
-  if(!helpOpen && mx>W/2-120 && mx<W/2-4 && my>224 && my<242){ helpOpen=true; beep(660,60,0.04); e.stopPropagation(); return; }
-  if(!helpOpen && mx>W/2+4 && mx<W/2+120 && my>224 && my<242){ startBotRace(); e.stopPropagation(); return; }
-  if(!helpOpen && mx>W/2-58 && mx<W/2+58 && my>244 && my<262){ lobbyOpen(); e.stopPropagation(); }
+  if(helpOpen){ helpOpen=false; e.stopPropagation(); return; }
+  const b=hitBtn(MENU_BTNS,mx,my);
+  if(!b) return;
+  e.stopPropagation();
+  beep(660,60,0.04);
+  if(b.id==='solo')   { SND.menu(); reset(); }
+  if(b.id==='online') { lobbyOpen(); }
+  if(b.id==='bots')   { startBotRace(); }
+  if(b.id==='help')   { helpOpen=true; }
+},true);
+cv.addEventListener('pointerdown',e=>{
+  if(!pauseOpen) return;
+  const r=cv.getBoundingClientRect(), mx=(e.clientX-r.left)/r.width*W, my=(e.clientY-r.top)/r.height*H;
+  const b=hitBtn(pauseBtns(),mx,my);
+  if(!b) return;
+  e.stopPropagation(); e.preventDefault(); beep(660,60,0.04);
+  if(b.id==='resume')  closePause();
+  if(b.id==='menu')    exitToMenu();
+  if(b.id==='leave')   exitToMenu();
+  if(b.id==='restart'){
+    closePause();
+    if(mode==='race') startBotRace(); else { SND.menu(); reset(); }
+  }
 },true);
 // Keys only drive the game when the player is not typing. Without this, a
 // space in the chat box or the name field fires or pauses the cannon.
@@ -652,8 +720,20 @@ document.addEventListener('keydown',e=>{
   if(e.code==='ArrowUp'){nudge(3);e.preventDefault();}
   if(e.code==='ArrowDown'){nudge(-3);e.preventDefault();}
   if(e.code==='Space'){fire();e.preventDefault();}
+  if(e.code==='Escape' && pauseOpen){ closePause(); e.preventDefault(); }
   if(e.code==='KeyR' && mode==='menu' && !helpOpen){ startBotRace(); e.preventDefault(); }
   if(e.code==='KeyO' && mode==='menu' && !helpOpen){ lobbyOpen(); e.preventDefault(); }
+});
+
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){
+    // A hidden tab stops getting animation frames, so the countdown would run
+    // out unseen and fire with whatever the power meter happened to freeze at.
+    // Lock the shot now instead of losing it.
+    if(mode==='race' && race && race.phase==='aim' && !race.locked) raceLock();
+    return;
+  }
+  if(actx && actx.state==='suspended') actx.resume().catch(()=>{});
 });
 
 const clouds=[];
@@ -978,7 +1058,7 @@ function raceFire(){
     p.x=33+Math.cos(a)*62; p.y=GROUND-24-Math.sin(a)*62;
     p.vx=Math.cos(a)*sp; p.vy=-Math.sin(a)*sp;
   });
-  r.phase='fly'; flash=8; SND.fire();
+  r.phase='fly'; r.flyT0=performance.now(); flash=8; SND.fire();
   setTimeout(()=>{ if(race&&race.phase==='fly') SND.cry(); },320);
 }
 function raceEndPip(p,how){
@@ -1064,7 +1144,14 @@ function raceTick(){
     }
     return;
   }
-  if(r.phase!=='fly') return;
+}
+// One 60Hz step of a race. Called as many times per animation frame as real
+// time says it should be, so a throttled or backgrounded tab catches up instead
+// of leaving the pip frozen mid air. Frame contents are untouched: same order,
+// same RNG draws, so _sim.js stays in lockstep.
+function raceStepFrame(){
+  const r=race;
+  if(!r || r.phase!=='fly') return;
   r.pframes++;
   if(flash>0) flash--;
   r.pips.forEach(p=>raceStepPip(p,r.world));
@@ -1427,7 +1514,14 @@ function loop(){
     if(pip.slow>45 || pip.frames>12000) endRun('STOPPED');
     spawnAhead();
   }
-  if(mode==='race'){ raceTick(); }
+  if(mode==='race'){
+    if(race.phase!=='fly'){ raceTick(); }
+    else if(!paused){
+      const due=Math.floor((performance.now()-race.flyT0)/(1000/60));
+      let budget=400;                       // cap the catch-up so a long absence
+      while(race.pframes<due && race.phase==='fly' && budget-->0) raceStepFrame();
+    }
+  }
   cam=(mode==='menu')?0:(mode==='race'?raceCamX():Math.max(0,pip.x-70));
   // vertical follow: hold the ground shot until the pip climbs, then track it
   if(mode==='menu'){ camY=TY_BASE; }
@@ -1508,27 +1602,13 @@ function loop(){
         ctx.drawImage(p.img,-16,-16,32,32); ctx.restore();
       }
     });
-    center('TAP OR SPACE TO PLAY',196,9,(Math.floor(tick/24)%2)?'#fff':'#9db8e8');
-    center('BEST '+best+' FT',214,7,'#dce8ff');
-    ctx.fillStyle='#132a52'; ctx.fillRect(W/2-120,226,116,16);
-    ctx.strokeStyle='#9feaff'; ctx.lineWidth=1; ctx.strokeRect(W/2-119.5,226.5,115,15);
-    ctx.font='7px '+P2; ctx.fillStyle='#9feaff'; ctx.fillText('HOW TO PLAY',W/2-120+(116-ctx.measureText('HOW TO PLAY').width)/2,237);
-    ctx.fillStyle='#3a1a52'; ctx.fillRect(W/2+4,226,116,16);
-    ctx.strokeStyle='#ff9dff'; ctx.strokeRect(W/2+4.5,226.5,115,15);
-    ctx.fillStyle='#ff9dff'; ctx.fillText('RACE VS BOTS',W/2+4+(116-ctx.measureText('RACE VS BOTS').width)/2,237);
-    ctx.fillStyle='#1a3a2a'; ctx.fillRect(W/2-58,246,116,16);
-    ctx.strokeStyle='#8cff6b'; ctx.strokeRect(W/2-57.5,246.5,115,15);
-    ctx.fillStyle='#8cff6b'; ctx.fillText('ONLINE RACE',W/2-58+(116-ctx.measureText('ONLINE RACE').width)/2,257);
+    center('BEST '+best+' FT',194,7,'#dce8ff');
+    drawBtns(MENU_BTNS);
   }else if(mode!=='race'){
     ctx.font='10px '+P2;
     ctx.fillStyle='#123'; ctx.fillText(feet+' FT',9,19);
     ctx.fillStyle='#fff'; ctx.fillText(feet+' FT',8,18);
     ctx.font='6px '+P2; ctx.fillStyle='#dce8ff'; ctx.fillText('BEST '+best,8,30);
-    if(paused && mode==='fly'){
-      ctx.fillStyle='rgba(10,20,40,0.45)'; ctx.fillRect(0,H/2-22,W,44);
-      center('PAUSED',H/2-4,12,'#fff');
-      center('SPACE TO RESUME',H/2+12,7,'#dce8ff');
-    }
     if(mode==='dead'){
       ctx.fillStyle='rgba(10,20,40,0.35)'; ctx.fillRect(0,H/2-36,W,76);
       center(deadMsg+' \u00b7 '+feet+' FT'+(newBest?' \u00b7 NEW BEST':''),H/2-14,10,'#fff');
@@ -1536,6 +1616,14 @@ function loop(){
       center('TAP OR SPACE TO RELOAD',H/2+26,7,'#fff');
       if(newBest){ center('NEW BEST \u00b7 SHARE IT',H/2+44,6,'#ffd94a'); }
     }
+  }
+  if(pauseOpen){
+    const online=(mode==='race' && race && race.online);
+    ctx.fillStyle='rgba(8,18,38,0.86)'; ctx.fillRect(0,0,W,H);
+    center(online?'RACE STILL RUNNING':'PAUSED',H/2-58,12,'#fff');
+    center(online?'YOUR PIP KEEPS FLYING AND WILL STILL BE RANKED'
+                 :'SPACE OR ESC TO RESUME',H/2-44,6,'#dce8ff');
+    drawBtns(pauseBtns());
   }
   requestAnimationFrame(loop);
 }
