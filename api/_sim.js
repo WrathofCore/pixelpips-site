@@ -121,3 +121,90 @@ export function simulate(seed, angle, power) {
 
   return { ft: feet, how };
 }
+
+// ---------------------------------------------------------------- race replay
+// Mirrors the race loop in pipcannon.html exactly. Each pip has its own RNG
+// stream, the world has its own, all derived from the race seed. Pips are
+// stepped in slot order every frame and consumables go to the first to touch
+// them. Returns per-slot distance and cause, plus placings.
+function xorshift(seed) {
+  let st = (seed >>> 0) || 1;
+  return () => { st ^= st << 13; st >>>= 0; st ^= st >> 17; st ^= st << 5; st >>>= 0; return st / 4294967296; };
+}
+export function simulateRace(seed, inputs) {
+  const wrng = xorshift(seed);
+  const w = { rng: wrng, bag: [], lastType: '', lastRun: 0, prevPair: false, nextSpawnX: 200, items: [] };
+  const refill = () => { const add = BAG.slice(); for (let i = add.length - 1; i > 0; i--) { const j = (w.rng() * (i + 1)) | 0; [add[i], add[j]] = [add[j], add[i]]; } w.bag = w.bag.concat(add); };
+  const pick = (b) => { for (let k = w.bag.length - 1; k >= 0; k--) { if (b === null || w.bag[k] !== b) return k; } return -1; };
+  const nextType = () => {
+    if (!w.bag.length) refill();
+    const blocked = (w.lastRun >= 2 || (w.prevPair && w.lastRun >= 1)) ? w.lastType : null;
+    let i = pick(blocked); if (i < 0) { refill(); i = pick(blocked); } if (i < 0) i = w.bag.length - 1;
+    const t = w.bag.splice(i, 1)[0];
+    if (t === w.lastType) w.lastRun++; else { w.prevPair = (w.lastRun === 2); w.lastRun = 1; w.lastType = t; }
+    return t;
+  };
+  const spawn = (leadX) => {
+    while (w.nextSpawnX < leadX - 70 + VW + 400) {
+      const type = nextType();
+      if (type === 'balloon') w.items.push({ type, x: w.nextSpawnX, y: GROUND - 64 - w.rng() * 88, used: false });
+      else w.items.push({ type, x: w.nextSpawnX, used: false });
+      w.nextSpawnX += 60 + w.rng() * 120;
+    }
+  };
+  const pips = inputs.map((inp, i) => {
+    const rng = xorshift((seed ^ Math.imul(i + 1, 0x9E3779B9)) >>> 0);
+    let angle = inp.angle, power = inp.power;
+    if (angle == null) angle = 10 + Math.floor(rng() * 51);
+    if (power == null) power = Math.round(rng() * 100000) / 1000;
+    const sp = 8 + (power / 100) * 13, a = angle * Math.PI / 180;
+    return { slot: i, rng, angle, power, x: 33 + Math.cos(a) * 62, y: GROUND - 24 - Math.sin(a) * 62,
+      vx: Math.cos(a) * sp, vy: -Math.sin(a) * sp, stuck: false, slow: 0, frames: 0, feet: 0, dead: false, how: '' };
+  });
+  let pframes = 0;
+  const end = (p, how) => { if (p.dead) return; p.dead = true; p.how = how; p.feet = Math.max(p.feet, Math.floor((p.x - 44) / PX_PER_FT)); };
+  const step = (p) => {
+    if (p.dead) return;
+    p.vy += 0.31; p.x += p.vx; p.y += p.vy;
+    p.feet = Math.max(p.feet, Math.floor((p.x - 44) / PX_PER_FT));
+    for (const it of w.items) {
+      if (p.dead) break;
+      if (it.type === 'balloon') {
+        if (it.used) continue;
+        const by = it.y + Math.sin(pframes / 22 + it.x) * 2;
+        if (Math.abs(p.x - (it.x + 9)) < 22 && p.y > by - 10 && p.y < by + 28) {
+          it.used = true; p.vy = -(12 + p.rng() * 5); p.vx = Math.max(p.vx * 0.9, 4) + 3 + p.rng() * 3;
+        }
+        continue;
+      }
+      if (it.type === 'trap') {
+        if (Math.abs(p.x - (it.x + 11)) < 11 && Math.abs(p.y - (GROUND - 27)) < 9) { p.x = it.x + 11; p.y = GROUND - 27; p.stuck = true; end(p, 'EATEN'); }
+        continue;
+      }
+      const wdt = (it.type === 'spikes') ? 24 : (it.type === 'tramp' ? 26 : (it.type === 'tnt' ? 15 : 18));
+      if (p.x < it.x || p.x > it.x + wdt) continue;
+      if (it.type === 'tnt' && !it.used && p.y > GROUND - 22) { it.used = true; p.vx = Math.max(p.vx, 5) + 4 + p.rng() * 4; p.vy = -(13 + p.rng() * 5); }
+      else if (it.type === 'tramp' && p.vy > 0 && p.y > GROUND - 18) { p.y = GROUND - 18; p.vy = -Math.max(12, Math.abs(p.vy) * 1.35); p.vx *= 1.02; }
+      else if (it.type === 'spikes' && p.y > GROUND - 18) { p.x = it.x + 12; p.y = GROUND - 16; p.stuck = true; end(p, 'IMPALED'); }
+    }
+    if (p.dead) return;
+    if (!p.stuck && p.y >= GROUND - 9) {
+      p.y = GROUND - 9; p.vy *= -(0.55 + p.rng() * 0.14); p.vx *= 0.972;
+      if (Math.abs(p.vy) < 0.9 && Math.abs(p.vx) < 0.5) end(p, 'STOPPED');
+    }
+    if (p.dead) return;
+    p.frames++;
+    if (Math.abs(p.vx) < 0.4 && Math.abs(p.vy) < 1.2) p.slow++; else p.slow = 0;
+    if (p.slow > 45 || p.frames > 12000) end(p, 'STOPPED');
+  };
+  while (pips.some(p => !p.dead)) {
+    pframes++;
+    pips.forEach(step);
+    spawn(Math.max(...pips.map(p => p.x)));
+    if (w.items.length > 4000) w.items = w.items.slice(-2000);
+    if (pframes > 20000) break;
+  }
+  const ranked = pips.slice().sort((a, b) => b.feet - a.feet);
+  ranked.forEach((p, i) => { p.place = i + 1; });
+  return pips.map(p => ({ slot: p.slot, ft: p.feet, how: p.how, place: p.place, angle: p.angle, power: p.power }));
+}

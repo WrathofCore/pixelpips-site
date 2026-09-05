@@ -97,6 +97,14 @@
     <div class="sc-tip" id="sc-tip">X can't attach an image from a link. Copy or save the card, then paste it into the post.</div>
   </div>
 </div>
+<div id="lobby">
+  <div class="card">
+    <div class="lb-top">ONLINE RACE</div>
+    <div id="lobby-body"></div>
+    <div class="lb-actions" id="lobby-actions"></div>
+    <div class="sc-tip" id="lobby-note"></div>
+  </div>
+</div>
 <div id="ticker"><div id="tickertrack"></div></div>
 <style>
   #ticker{position:fixed;left:0;right:0;bottom:0;background:#0e120c;border-top:2px solid #2a3a12;overflow:hidden;height:30px;z-index:9}
@@ -118,6 +126,16 @@
   #sharecard #sc-img{display:block;width:100%;max-width:300px;margin:0 auto 14px;border:2px solid #0e1c38;image-rendering:pixelated}
   #sharecard .sc-tip{margin-top:12px;font-size:9px;line-height:1.5;color:#9db8e8}
   #sharecard .card{max-width:360px}
+  #lobby{display:none;position:fixed;inset:0;background:rgba(6,10,18,0.78);align-items:center;justify-content:center;z-index:21}
+  #lobby .card{background:#132a52;border:3px solid #ff9dff;padding:18px 22px;max-width:380px;width:92vw;text-align:left}
+  #lobby .lb-top{font-family:'Press Start 2P',monospace;font-size:9px;color:#ff9dff;margin-bottom:12px;text-align:center}
+  #lobby .lb-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+  #lobby input{background:#0b0d0b;border:1px solid #2a3a12;color:#c8f06a;font-family:'Space Mono',monospace;padding:7px;font-size:12px;width:100%;box-sizing:border-box;text-transform:uppercase}
+  #lobby .plist{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+  #lobby .prow{display:flex;justify-content:space-between;font-size:11px;padding:4px 8px;background:#0e1c38}
+  #lobby .prow b{color:#e8ff8a;font-weight:400}
+  #lobby .code{font-family:'Press Start 2P',monospace;font-size:16px;color:#ffd94a;text-align:center;margin:6px 0 10px;letter-spacing:4px}
+  #lobby .muted{color:#9db8e8}
   #posbody .prow{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
   #posbody .prow b{color:#e8ff8a;font-weight:400}
   #posbody .phead{color:#aab78b;letter-spacing:1px;margin-top:5px}
@@ -492,6 +510,12 @@ function spawnAhead(){
   }
 }
 function fire(){
+  if(mode==='race'){
+    if(race.phase==='aim'){ raceLock(); return; }
+    if(race.phase==='done'){ race=null; mode='menu'; return; }
+    if(race.phase==='fly' && race.pips[race.mySlot].dead){ raceCycleSpectate(); return; }
+    return;                                   // no pausing a race
+  }
   if(mode==='fly'){ paused=!paused; beep(paused?300:520,60,0.04); return; }
   if(mode==='menu'){ if(helpOpen){helpOpen=false;return;} SND.menu(); reset(); return; }
   if(mode==='dead'){ reset(); return; }
@@ -581,15 +605,16 @@ cv.addEventListener('pointerdown',e=>{
   const touch = e.pointerType==='touch' || e.pointerType==='pen';
   if(mode==='menu'||mode==='dead'){ fire(); return; }
   if(!touch) return;
+  if(mode==='race'&&(race.phase==='done'||(race.phase==='fly'&&race.pips[race.mySlot].dead))){ fire(); return; }
   if(mode==='fly'){ fire(); return; }
-  if(mode==='aim'){
+  if(mode==='aim' || (mode==='race'&&race.phase==='aim'&&!race.locked)){
     touchAim={y0:canvasPt(e).y, a0:angle};
     try{cv.setPointerCapture(e.pointerId);}catch(_){}
     e.preventDefault();
   }
 },{passive:false});
 cv.addEventListener('pointermove',e=>{
-  if(!touchAim||mode!=='aim') return;
+  if(!touchAim||!(mode==='aim'||(mode==='race'&&race.phase==='aim'))) return;
   const dy=canvasPt(e).y-touchAim.y0;
   const want=Math.round(touchAim.a0-dy*0.55);
   if(want!==angle) nudge(Math.max(-6,Math.min(6,want-angle)));
@@ -599,9 +624,11 @@ cv.addEventListener('pointermove',e=>{
   if(!touchAim) return;
   touchAim=null;
   if(mode==='aim') fire();
+  else if(mode==='race'&&race.phase==='aim') raceLock();
 }));
 document.getElementById('mute').onclick=e=>{muted=!muted;e.target.textContent=muted?'SOUND OFF':'SOUND ON';};
 function nudge(d){
+  if(mode==='race' && (race.phase!=='aim' || race.locked)) return;
   const before=angle;
   angle=Math.max(10,Math.min(60,angle+d));
   if(angle!==before) SND.aim();
@@ -609,7 +636,9 @@ function nudge(d){
 cv.addEventListener('pointerdown',e=>{
   if(mode!=='menu') return;
   const r=cv.getBoundingClientRect(), mx=(e.clientX-r.left)/r.width*W, my=(e.clientY-r.top)/r.height*H;
-  if(!helpOpen && mx>W/2-58 && mx<W/2+58 && my>224 && my<242){ helpOpen=true; beep(660,60,0.04); e.stopPropagation(); }
+  if(!helpOpen && mx>W/2-120 && mx<W/2-4 && my>224 && my<242){ helpOpen=true; beep(660,60,0.04); e.stopPropagation(); return; }
+  if(!helpOpen && mx>W/2+4 && mx<W/2+120 && my>224 && my<242){ startBotRace(); e.stopPropagation(); return; }
+  if(!helpOpen && mx>W/2-58 && mx<W/2+58 && my>244 && my<262){ lobbyOpen(); e.stopPropagation(); }
 },true);
 // Keys only drive the game when the player is not typing. Without this, a
 // space in the chat box or the name field fires or pauses the cannon.
@@ -623,6 +652,8 @@ document.addEventListener('keydown',e=>{
   if(e.code==='ArrowUp'){nudge(3);e.preventDefault();}
   if(e.code==='ArrowDown'){nudge(-3);e.preventDefault();}
   if(e.code==='Space'){fire();e.preventDefault();}
+  if(e.code==='KeyR' && mode==='menu' && !helpOpen){ startBotRace(); e.preventDefault(); }
+  if(e.code==='KeyO' && mode==='menu' && !helpOpen){ lobbyOpen(); e.preventDefault(); }
 });
 
 const clouds=[];
@@ -799,7 +830,7 @@ function drawItem(it){
     ctx.restore();
   }else if(it.type==='balloon'){
     if(it.used) return;
-    const by=it.y+Math.sin(pframes/22+x)*2;
+    const by=it.y+Math.sin((mode==='race'?race.pframes:pframes)/22+x)*2;
     // red balloon with knot and highlight
     ctx.fillStyle='#d92b2b';
     ctx.beginPath(); ctx.ellipse(x+9,by,7,8,0,0,7); ctx.fill();
@@ -873,11 +904,500 @@ function hitItems(){
   }
 }
 
+
+// ============================================================ RACE MODE
+// N pips, one shared world, one seed. Every client simulates every pip from
+// the same inputs, so there is nothing to stream mid-race. Each pip owns its
+// own RNG stream and the world owns another, all derived from the race seed,
+// so processing order can never change an outcome. api/_sim.js mirrors this.
+const RACE_SLOTS=8, COUNTDOWN=10;
+const SLOT_COLORS=['#ffd94a','#ff6b6b','#6bd7ff','#8cff6b','#ff9dff','#ffb36b','#b48cff','#f0f0f0'];
+let race=null;
+
+function makeRng(seed){
+  let st=(seed>>>0)||1;
+  return ()=>{ st^=st<<13; st>>>=0; st^=st>>17; st^=st<<5; st>>>=0; return st/4294967296; };
+}
+function raceWorldRng(seed){ return makeRng(seed); }
+function racePipRng(seed,slot){ return makeRng((seed ^ Math.imul(slot+1,0x9E3779B9))>>>0); }
+
+function newRace({seed, players, mySlot}){
+  // players: [{name, sprite, angle, power, bot}] in slot order. angle/power may be filled later.
+  const wr=raceWorldRng(seed);
+  race={
+    seed, mySlot, phase:'aim', t0:performance.now(), countdown:COUNTDOWN, locked:false,
+    world:{rng:wr, bag:[], lastType:'', lastRun:0, prevPair:false, nextSpawnX:200, items:[]},
+    pframes:0,
+    pips: players.map((p,i)=>({
+      slot:i, name:p.name, sprite:p.sprite, bot:!!p.bot,
+      angle:p.angle, power:p.power,
+      x:0,y:0,vx:0,vy:0,rot:0,stuck:false,slow:0,frames:0,
+      feet:0, dead:false, how:'', rng:racePipRng(seed,i), place:0
+    })),
+    order:[], finished:false, spectSlot:null
+  };
+  // my own aim starts from the solo controls
+  const me=race.pips[mySlot];
+  me.angle=angle; me.power=null;
+  mode='race'; paused=false; helpOpen=false;
+  items=[]; splats=[]; booms=[]; stains=[];
+  SND.menu();
+}
+
+// ---- world helpers, same rules as solo but bound to the race world object
+function raceRefill(w){
+  const add=BAG.slice();
+  for(let i=add.length-1;i>0;i--){ const j=(w.rng()*(i+1))|0; [add[i],add[j]]=[add[j],add[i]]; }
+  w.bag=w.bag.concat(add);
+}
+function racePick(w,blocked){ for(let k=w.bag.length-1;k>=0;k--){ if(blocked===null||w.bag[k]!==blocked) return k; } return -1; }
+function raceNextType(w){
+  if(!w.bag.length) raceRefill(w);
+  const blocked=(w.lastRun>=2||(w.prevPair&&w.lastRun>=1))?w.lastType:null;
+  let i=racePick(w,blocked);
+  if(i<0){ raceRefill(w); i=racePick(w,blocked); }
+  if(i<0) i=w.bag.length-1;
+  const t=w.bag.splice(i,1)[0];
+  if(t===w.lastType){ w.lastRun++; } else { w.prevPair=(w.lastRun===2); w.lastRun=1; w.lastType=t; }
+  return t;
+}
+function raceSpawn(w,leadX){
+  while(w.nextSpawnX < leadX-70+VW+400){
+    const type=raceNextType(w);
+    if(type==='balloon') w.items.push({type,x:w.nextSpawnX,y:GROUND-64-w.rng()*88,used:false});
+    else w.items.push({type,x:w.nextSpawnX,used:false});
+    w.nextSpawnX += 60 + w.rng()*120;
+  }
+}
+function raceFire(){
+  const r=race;
+  r.pips.forEach(p=>{
+    if(p.angle==null) p.angle=10+Math.floor(p.rng()*51);
+    if(p.power==null) p.power=Math.round(p.rng()*100000)/1000;
+    const sp=8+(p.power/100)*13, a=p.angle*Math.PI/180;
+    p.x=33+Math.cos(a)*62; p.y=GROUND-24-Math.sin(a)*62;
+    p.vx=Math.cos(a)*sp; p.vy=-Math.sin(a)*sp;
+  });
+  r.phase='fly'; flash=8; SND.fire();
+  setTimeout(()=>{ if(race&&race.phase==='fly') SND.cry(); },320);
+}
+function raceEndPip(p,how){
+  if(p.dead) return;
+  p.dead=true; p.how=how;
+  p.feet=Math.max(p.feet,Math.floor((p.x-44)/PX_PER_FT));
+  race.order.push(p.slot);
+  if(p.slot===race.mySlot){ SND.land(); }
+}
+function raceStepPip(p,w){
+  if(p.dead) return;
+  p.vy+=0.31; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vx*0.06;
+  p.feet=Math.max(p.feet,Math.floor((p.x-44)/PX_PER_FT));
+  for(const it of w.items){
+    if(p.dead) break;
+    if(it.type==='balloon'){
+      if(it.used) continue;
+      const by=it.y+Math.sin(race.pframes/22+it.x)*2;
+      if(Math.abs(p.x-(it.x+9))<22 && p.y>by-10 && p.y<by+28){
+        it.used=true; boomFx(it.x+9,by+8);
+        p.vy=-(12+p.rng()*5); p.vx=Math.max(p.vx*0.9,4)+3+p.rng()*3;
+        if(p.slot===raceFocus().slot) SND.boom();
+      }
+      continue;
+    }
+    if(it.type==='trap'){
+      if(Math.abs(p.x-(it.x+11))<11 && Math.abs(p.y-(GROUND-27))<9){
+        it.shut=0.001; p.x=it.x+11; p.y=GROUND-27; p.stuck=true;
+        splat(p.x,GROUND-29,40); smear(p.x,6,20);
+        if(p.slot===raceFocus().slot) SND.chomp();
+        raceEndPip(p,'EATEN');
+      }
+      continue;
+    }
+    const wdt=(it.type==='spikes')?24:(it.type==='tramp'?26:(it.type==='tnt'?15:18));
+    if(p.x<it.x||p.x>it.x+wdt) continue;
+    if(it.type==='tnt' && !it.used && p.y>GROUND-22){
+      it.used=true; boomFx(p.x,GROUND-10);
+      p.vx=Math.max(p.vx,5)+4+p.rng()*4; p.vy=-(13+p.rng()*5);
+      splat(p.x,GROUND-8,16); smear(p.x,5,20);
+      if(p.slot===raceFocus().slot) SND.boom();
+    }else if(it.type==='tramp' && p.vy>0 && p.y>GROUND-18){
+      p.y=GROUND-18; p.vy=-Math.max(12,Math.abs(p.vy)*1.35); p.vx*=1.02;
+      if(p.slot===raceFocus().slot) SND.boing();
+    }else if(it.type==='spikes' && p.y>GROUND-18){
+      p.x=it.x+12; p.y=GROUND-16; p.stuck=true;
+      splat(p.x,p.y,60); smear(p.x,8,26);
+      for(let k=0;k<18;k++) stain(it.x+Math.random()*24, GROUND-13+Math.random()*11, 2+Math.random()*2, 1+Math.random()*3);
+      if(p.slot===raceFocus().slot) SND.impale();
+      raceEndPip(p,'IMPALED');
+    }
+  }
+  if(p.dead) return;
+  if(!p.stuck && p.y>=GROUND-9){
+    p.y=GROUND-9;
+    const impact=Math.abs(p.vy);
+    if(impact>1.2){ splat(p.x,GROUND-4,Math.min(22,6+impact*2|0)); smear(p.x,3+Math.min(9,impact|0),14+impact*2); }
+    if(p.slot===raceFocus().slot){ const now=performance.now(); if(impact>1.6&&now-lastThud>110){ SND.slap(impact); lastThud=now; } }
+    p.vy*=-(0.55+p.rng()*0.14); p.vx*=0.972;
+    if(Math.abs(p.vy)<0.9 && Math.abs(p.vx)<0.5) raceEndPip(p,'STOPPED');
+  }
+  if(p.dead) return;
+  p.frames++;
+  if(Math.abs(p.vx)<0.4 && Math.abs(p.vy)<1.2) p.slow++; else p.slow=0;
+  if(p.slow>45 || p.frames>12000) raceEndPip(p,'STOPPED');
+}
+function raceTick(){
+  const r=race;
+  if(r.phase==='aim'){
+    r.countdown=COUNTDOWN-(performance.now()-r.t0)/1000;
+    // bots pick when they feel like it, near the end
+    // bots choose with Math.random, never their sim stream: inputs are sent as
+    // values, and the sim stream must be untouched until the first bounce
+    r.pips.forEach(p=>{ if(p.bot&&p.angle==null&&r.countdown<7+p.slot*0.3){ p.angle=10+Math.floor(Math.random()*51); p.power=Math.round(Math.random()*100000)/1000; } });
+    if(!r.locked){ r.pips[r.mySlot].angle=angle; }
+    if(r.countdown<=0){
+      if(!r.locked){ r.pips[r.mySlot].power=Math.round(power*1000)/1000; r.locked=true; if(r.online) onlineLock(); }
+      if(r.online){
+        // hold at zero until the server hands back everyone's inputs
+        if(!r.online.inputsReady){ if(!r.online.fetching){ r.online.fetching=true; onlineFetchInputs().then(ok=>{ r.online.fetching=false; }); } return; }
+      }
+      raceFire();
+    }
+    return;
+  }
+  if(r.phase!=='fly') return;
+  r.pframes++;
+  if(flash>0) flash--;
+  r.pips.forEach(p=>raceStepPip(p,r.world));
+  const alive=r.pips.filter(p=>!p.dead);
+  const lead=Math.max(...r.pips.map(p=>p.x));
+  raceSpawn(r.world,lead);
+  if(r.world.items.length>4000) r.world.items=r.world.items.slice(-2000);
+  if(!alive.length && !r.finished){
+    r.finished=true; r.phase='done';
+    const ranked=r.pips.slice().sort((a,b)=>b.feet-a.feet);
+    ranked.forEach((p,i)=>p.place=i+1);
+    const me=r.pips[r.mySlot];
+    if(me.feet>best){ best=me.feet; persist(); hud.textContent='BEST '+best+' FT'; }
+    if(r.online) onlineSettle();
+  }
+}
+function raceFocus(){
+  const r=race, me=r.pips[r.mySlot];
+  if(!me.dead || r.phase!=='fly') return me;
+  const alive=r.pips.filter(p=>!p.dead);
+  if(!alive.length) return me;
+  if(r.spectSlot!=null){ const t=r.pips[r.spectSlot]; if(t&&!t.dead) return t; }
+  return alive.reduce((a,b)=>a.x>b.x?a:b);
+}
+function raceCycleSpectate(){
+  const r=race, me=r.pips[r.mySlot];
+  if(!me.dead||r.phase!=='fly') return;
+  const alive=r.pips.filter(p=>!p.dead).sort((a,b)=>b.x-a.x);
+  if(!alive.length) return;
+  const cur=raceFocus().slot;
+  const i=alive.findIndex(p=>p.slot===cur);
+  r.spectSlot=alive[(i+1)%alive.length].slot;
+  beep(560,40,0.03);
+}
+function raceCamX(){
+  const r=race, me=r.pips[r.mySlot];
+  if(r.phase==='aim') return 0;
+  if(!me.dead) return Math.max(0,me.x-70);
+  const alive=r.pips.filter(p=>!p.dead);
+  const lead=alive.length ? alive.reduce((a,b)=>a.x>b.x?a:b) : r.pips.reduce((a,b)=>a.x>b.x?a:b);
+  return Math.max(0,lead.x-70);
+}
+function raceLock(){
+  if(!race||race.phase!=='aim'||race.locked) return;
+  race.pips[race.mySlot].angle=angle;
+  race.pips[race.mySlot].power=Math.round(power*1000)/1000;
+  race.locked=true; beep(660,60,0.04);
+  if(race.online) onlineLock();
+}
+
+// ---- drawing
+function drawRaceCannon(){
+  const px=30, py=GROUND-24;
+  ctx.fillStyle='#8d8d84'; ctx.fillRect(px-16,GROUND-14,32,14);
+  ctx.fillStyle='#5c5c54'; ctx.fillRect(px-17,GROUND-16,34,3);
+  // eight barrels fanned by slot, each at its player's current angle
+  // all barrels are the same length and share one pivot column; each is painted
+  // in its slot colour with a darker body so the tip reads as the same colour
+  const shade=(hex,f)=>{ const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return 'rgb('+(r*f|0)+','+(g*f|0)+','+(b*f|0)+')'; };
+  // every barrel: same pivot, same length. Only the angle differs, which is the
+  // player's own aim. A number at the breech and a colour per slot tell them apart.
+  const order=race.pips.map((p,i)=>i).sort((a,b)=>(a===race.mySlot)-(b===race.mySlot));
+  order.forEach(i=>{
+    const p=race.pips[i];
+    const a=((p.angle==null?28:p.angle))*Math.PI/180;
+    ctx.save(); ctx.translate(px+3,py); ctx.rotate(-a);
+    ctx.fillStyle=shade(SLOT_COLORS[i],0.55); ctx.fillRect(-6,-4.5,54,9);
+    ctx.fillStyle=SLOT_COLORS[i]; ctx.fillRect(-6,-4.5,54,3);
+    ctx.fillStyle='#2a2a26'; ctx.fillRect(48,-5.5,4,11);
+    if(i===race.mySlot){ ctx.strokeStyle='#ffd94a'; ctx.lineWidth=1.5; ctx.strokeRect(-6,-4.5,54,9); }
+    ctx.fillStyle='#000'; ctx.fillRect(38,-4,7,8);
+    ctx.fillStyle=SLOT_COLORS[i]; ctx.font='5px '+P2; ctx.fillText(String(i+1),39.5,2);
+    ctx.restore();
+    if(i===race.mySlot){
+      const lx=px+3+Math.cos(a)*58, ly=py-Math.sin(a)*58;
+      ctx.font='5px '+P2; const w=ctx.measureText('YOU').width;
+      ctx.fillStyle='#000'; ctx.fillRect(lx-3,ly-15,w+6,10);
+      ctx.fillStyle='#ffd94a'; ctx.fillText('YOU',lx,ly-8);
+    }
+  });
+  if(flash>0){
+    const a=(race.pips[race.mySlot].angle||28)*Math.PI/180;
+    const tipx=px+3+Math.cos(a)*56, tipy=py-Math.sin(a)*56;
+    ctx.fillStyle=flash%2?'#ffe066':'#ff9a3d';
+    const sz=flash*1.6; ctx.fillRect(tipx-sz/2,tipy-sz/2,sz,sz); ctx.fillRect(tipx-sz,tipy-2,sz*2,4); ctx.fillRect(tipx-2,tipy-sz,4,sz*2);
+  }
+  ctx.fillStyle='#b9b9b0'; ctx.fillRect(px-13,py-13,26,26);
+  ctx.fillStyle='#d5d5cb'; ctx.fillRect(px-13,py-13,26,4);
+  ctx.fillStyle='#1a1a16'; ctx.fillRect(px-10,py-9,20,9);
+  ctx.fillStyle='#ff2f2f'; ctx.font='7px monospace';
+  ctx.fillText(('  '+Math.round(race.pips[race.mySlot].angle||angle)).slice(-2)+'\u00B0',px-8,py-2);
+  ctx.fillStyle='#1a1a16'; ctx.fillRect(px-10,py+2,20,5);
+  if(race.phase==='aim'){
+    const lit=Math.round((race.locked?race.pips[race.mySlot].power:power)/100*9);
+    for(let i=0;i<9;i++){ ctx.fillStyle=i<lit?(i>6?'#ff3b1f':(i>3?'#ffb61f':'#5ce03a')):'#2c2c26'; ctx.fillRect(px-9+i*2.1,py+3,1.6,3); }
+  }
+  ctx.fillStyle='#9a9a92'; ctx.fillRect(px-2,py-22,2,9);
+  ctx.fillStyle='#c9202a'; ctx.fillRect(px-13,py-28,26,7);
+  ctx.fillStyle='#fff'; ctx.font='6px monospace'; ctx.fillText('RACE',px-8,py-22);
+}
+function drawRacePips(){
+  const r=race, focus=raceFocus();
+  // others first, mine last so it is always on top
+  const order=r.pips.slice().sort((a,b)=>(a.slot===r.mySlot)-(b.slot===r.mySlot));
+  order.forEach(p=>{
+    if(r.phase==='aim') return;
+    const mine=p.slot===r.mySlot, spect=(!mine && p.slot===focus.slot);
+    const img=p.sprite&&p.sprite.img;
+    ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+    if(img&&img.complete&&img.naturalWidth) ctx.drawImage(img,-11,-11,22,22);
+    else { ctx.fillStyle=SLOT_COLORS[p.slot]; ctx.fillRect(-11,-11,22,22); }
+    ctx.restore();
+    const nm=p.dead?'\u2715 '+p.name:p.name;
+    ctx.font=(mine?'6px ':'5px ')+P2;
+    const wdt=ctx.measureText(nm).width, tx=p.x-wdt/2, ty=mine?p.y-19:p.y-17;
+    if(mine||spect){
+      // boxed tag: YOU in yellow on black, the spectated pip in its own colour on black
+      ctx.fillStyle='#000'; ctx.fillRect(tx-3,ty-7,wdt+6,10);
+      ctx.fillStyle=mine?'#ffd94a':SLOT_COLORS[p.slot]; ctx.fillText(nm,tx,ty);
+    }else{
+      ctx.fillStyle=p.dead?'#8a94a0':SLOT_COLORS[p.slot]; ctx.fillText(nm,tx,ty);
+    }
+  });
+}
+function drawRaceHud(){
+  const r=race, focus=raceFocus(), me=r.pips[r.mySlot];
+  // roster bar across the top, sorted by distance
+  const sorted=r.pips.slice().sort((a,b)=>b.feet-a.feet);
+  const cw=W/RACE_SLOTS;
+  ctx.fillStyle='rgba(8,18,38,0.72)'; ctx.fillRect(0,0,W,24);
+  sorted.forEach((p,i)=>{
+    const x=i*cw+3;
+    const onCam=(p.slot===focus.slot && r.phase==='fly');
+    if(onCam){ ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fillRect(x-2,2,cw-2,20); ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.strokeRect(x-1.5,2.5,cw-3,19); }
+    ctx.fillStyle=p.dead?'#5a6068':SLOT_COLORS[p.slot];
+    ctx.fillRect(x,4,3,16);
+    ctx.font='5px '+P2;
+    const ord=(i+1)+(['ST','ND','RD'][i]||'TH');
+    ctx.fillStyle='#9db8e8'; ctx.fillText(ord,x+6,10);
+    ctx.fillStyle=p.slot===r.mySlot?'#ffd94a':(p.dead?'#8a94a0':'#dce8ff');
+    ctx.fillText(p.name.slice(0,6),x+22,10);
+    ctx.fillStyle=p.dead?'#ff6b6b':'#e8ff8a';
+    ctx.fillText((p.dead?'\u2715 ':'')+p.feet+' FT',x+6,19);
+  });
+  // off-screen arrows for pips beyond either edge
+  const camX=raceCamX();
+  const offL=[], offR=[];
+  r.pips.forEach(p=>{
+    if(r.phase==='aim'||p.slot===focus.slot||p.dead||me.dead) return;
+    const sx=(p.x-camX)*Z;
+    if(sx<0) offL.push(p); else if(sx>W) offR.push(p);
+  });
+  offL.sort((a,b)=>b.feet-a.feet); offR.sort((a,b)=>b.feet-a.feet);
+  const drawEdge=(list,right)=>{
+    list.forEach((p,i)=>{
+      const ex=right?W-6:6, ey=54+i*11;
+      ctx.fillStyle=p.dead?'#8a94a0':SLOT_COLORS[p.slot];
+      ctx.beginPath();
+      if(right){ ctx.moveTo(ex,ey); ctx.lineTo(ex-6,ey-4); ctx.lineTo(ex-6,ey+4); }
+      else { ctx.moveTo(ex,ey); ctx.lineTo(ex+6,ey-4); ctx.lineTo(ex+6,ey+4); }
+      ctx.fill();
+      ctx.font='5px '+P2;
+      const lbl=(p.dead?'\u2715 ':'')+p.name.slice(0,7)+' '+p.feet;
+      const wdt=ctx.measureText(lbl).width;
+      ctx.fillStyle='rgba(8,18,38,0.6)'; ctx.fillRect(right?ex-9-wdt-2:ex+8, ey-5, wdt+4, 9);
+      ctx.fillStyle=p.dead?'#8a94a0':SLOT_COLORS[p.slot];
+      ctx.fillText(lbl, right?ex-9-wdt:ex+10, ey+2);
+    });
+  };
+  drawEdge(offL,false); drawEdge(offR,true);
+  if(r.phase==='aim'){
+    ctx.fillStyle='rgba(10,20,40,0.35)'; ctx.fillRect(0,H/2-30,W,60);
+    center(r.countdown>0?('RACE STARTS IN '+Math.ceil(r.countdown)):'SYNCING INPUTS\u2026',H/2-8,12,'#ffd94a');
+    center(r.locked?'LOCKED IN. WAIT FOR IT.':'AIM WITH ARROWS. SPACE LOCKS YOUR POWER.',H/2+12,6,'#dce8ff');
+  }else if(r.phase==='fly'){
+    if(!me.dead){
+      ctx.font='10px '+P2; ctx.fillStyle='#123'; ctx.fillText(me.feet+' FT',9,41);
+      ctx.fillStyle='#fff'; ctx.fillText(me.feet+' FT',8,40);
+    }else{
+      // spectating: big banner in the leader's colour, your own result pinned under it
+      ctx.fillStyle='rgba(8,18,38,0.78)'; ctx.fillRect(0,26,W,30);
+      ctx.fillStyle=SLOT_COLORS[focus.slot]; ctx.fillRect(0,26,W,2);
+      center('SPECTATING  '+focus.name+'  \u00b7  '+focus.feet+' FT',41,7,SLOT_COLORS[focus.slot]);
+      center('YOU  \u00b7  '+me.how+' AT '+me.feet+' FT   \u00b7   SPACE OR TAP TO SWITCH',52,5,'#ffd94a');
+    }
+    if(me.y*Z+camY < -4 && !me.dead){
+      const sx=Math.max(10,Math.min(W-40,(me.x-camX)*Z));
+      const alt=Math.max(0,Math.round((GROUND-9-me.y)/PX_PER_FT));
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.moveTo(sx,28); ctx.lineTo(sx-5,36); ctx.lineTo(sx+5,36); ctx.fill();
+      ctx.font='9px monospace'; ctx.fillText('+'+alt+' FT',sx+8,36);
+    }
+  }else if(r.phase==='done'){
+    ctx.fillStyle='rgba(8,18,38,0.86)'; ctx.fillRect(0,0,W,H);
+    const ranked=r.pips.slice().sort((a,b)=>a.place-b.place);
+    center('RACE OVER',40,13,'#ffd94a');
+    ranked.forEach((p,i)=>{
+      const y=66+i*17;
+      ctx.font='6px '+P2;
+      ctx.fillStyle=p.slot===r.mySlot?'#fff':'#dce8ff';
+      ctx.fillText((p.place)+'. '+p.name, 90, y);
+      ctx.fillStyle='#e8ff8a'; ctx.fillText(p.feet+' FT', 250, y);
+      ctx.fillStyle='#9db8e8'; ctx.fillText(p.how, 330, y);
+      ctx.fillStyle=SLOT_COLORS[p.slot]; ctx.fillRect(78,y-6,5,7);
+    });
+    center(me.place===1?'YOU WON.':'YOU PLACED '+me.place+' OF '+r.pips.length+'.',214,8,'#ffd94a');
+    if(r.online){ center(r.serverResult?'RANKED \u00b7 VERIFIED BY SERVER REPLAY':'RANKED \u00b7 VERIFYING\u2026',226,5,'#8cff6b'); }
+    center('TAP OR SPACE FOR THE MENU',236,6,(Math.floor(tick/24)%2)?'#fff':'#9db8e8');
+  }
+}
+// ============================================================ ONLINE LOBBY
+let lobby={room:null, poll:null, clockOff:0, launched:false};
+const lobbyEl=()=>document.getElementById('lobby');
+function lobbyOpen(){ lobbyEl().style.display='flex'; renderLobby(); }
+function lobbyClose(){ lobbyEl().style.display='none'; if(lobby.poll){clearInterval(lobby.poll);lobby.poll=null;} }
+async function raceApi(body){
+  const r=await fetch('/api/race',{method:'POST',headers:authHeaders(),body:JSON.stringify(body)});
+  let d={}; try{ d=await r.json(); }catch(_){}
+  return {status:r.status, ...d};
+}
+async function raceGet(code){
+  const r=await fetch('/api/race?code='+encodeURIComponent(code),{headers:authHeaders(),cache:'no-store'});
+  let d={}; try{ d=await r.json(); }catch(_){}
+  if(d.room&&d.room.now) lobby.clockOff=d.room.now-Date.now();
+  return d;
+}
+function lobbyNote(t){ const n=document.getElementById('lobby-note'); if(n) n.textContent=t||''; }
+function renderLobby(){
+  const body=document.getElementById('lobby-body'), acts=document.getElementById('lobby-actions');
+  if(!token||!myName()){
+    body.innerHTML='<div class="muted">SIGN IN AND SET A NAME TO RACE ONLINE. RACES ARE RANKED, SO EVERYONE NEEDS A VERIFIED NAME.</div>';
+    acts.innerHTML='<button class="mini ghost" id="lb-close">CLOSE</button>';
+    document.getElementById('lb-close').onclick=lobbyClose; return;
+  }
+  const r=lobby.room;
+  if(!r){
+    body.innerHTML='<div class="muted">JOIN THE OPEN ROOM, MAKE A PRIVATE ONE, OR ENTER A CODE.</div><input id="lb-code" placeholder="ROOM CODE" maxlength="4" style="margin-top:10px">';
+    acts.innerHTML='<button class="mini" id="lb-open">OPEN ROOM</button><button class="mini" id="lb-create">PRIVATE ROOM</button><button class="mini" id="lb-join">JOIN CODE</button><button class="mini ghost" id="lb-close">CLOSE</button>';
+    document.getElementById('lb-open').onclick=()=>lobbyEnter({action:'open'});
+    document.getElementById('lb-create').onclick=()=>lobbyEnter({action:'create'});
+    document.getElementById('lb-join').onclick=()=>{ const c=document.getElementById('lb-code').value.trim().toUpperCase(); if(c.length===4) lobbyEnter({action:'join',code:c}); };
+    document.getElementById('lb-close').onclick=lobbyClose;
+    return;
+  }
+  body.innerHTML='<div class="code">'+r.code+'</div>'
+    +'<div class="muted">'+(r.code==='OPEN'?'ANYONE ON THE SITE CAN JOIN THIS ROOM.':'SEND THIS CODE TO YOUR OPPONENTS.')+'</div>'
+    +'<div class="plist">'+r.players.map((p,i)=>'<div class="prow"><span>'+(i+1)+'. '+(p.me?'<b>'+p.name+'</b>':p.name)+(i===0?' <span class="muted">HOST</span>':'')+'</span><span class="muted">'+(r.phase==='lobby'?'READY':(p.locked?'LOCKED':'AIMING'))+'</span></div>').join('')+'</div>'
+    +'<div class="muted">'+r.players.length+' / 8'+(r.phase==='countdown'?' \u00b7 STARTING':'')+'</div>';
+  const meFirst=r.players[0]&&r.players[0].me;
+  acts.innerHTML=(r.phase==='lobby'&&meFirst?'<button class="mini" id="lb-start">START RACE</button>':'')
+    +'<button class="mini ghost" id="lb-leave">LEAVE</button>';
+  if(document.getElementById('lb-start')) document.getElementById('lb-start').onclick=lobbyStart;
+  document.getElementById('lb-leave').onclick=lobbyLeave;
+  if(r.phase==='lobby'&&!meFirst) lobbyNote('WAITING FOR THE HOST TO START.');
+  else if(r.phase==='lobby'&&r.players.length<2) lobbyNote('NEED AT LEAST TWO PLAYERS.');
+  else lobbyNote('');
+}
+async function lobbyEnter(body){
+  lobbyNote('\u2026');
+  const d=await raceApi(body);
+  if(!d.ok){ lobbyNote(d.error==='in-progress'?'OPEN ROOM IS MID-RACE. TRY AGAIN IN A MINUTE.':d.error==='full'?'ROOM IS FULL.':d.error==='no-room'?'NO ROOM WITH THAT CODE.':'COULD NOT JOIN: '+(d.error||d.status)); return; }
+  lobby.room=d.room; lobby.launched=false; renderLobby();
+  if(lobby.poll) clearInterval(lobby.poll);
+  lobby.poll=setInterval(lobbyPoll,700);
+}
+async function lobbyLeave(){
+  if(lobby.room){ try{ await raceApi({action:'leave',code:lobby.room.code}); }catch(_){} }
+  lobby.room=null; lobbyClose();
+}
+async function lobbyStart(){
+  const d=await raceApi({action:'start',code:lobby.room.code});
+  if(!d.ok){ lobbyNote(d.error==='need-two'?'NEED AT LEAST TWO PLAYERS.':'COULD NOT START: '+(d.error||d.status)); return; }
+  lobby.room=d.room; renderLobby();
+}
+async function lobbyPoll(){
+  if(!lobby.room) return;
+  const d=await raceGet(lobby.room.code);
+  if(!d.ok){ if(d.error==='no-room'){ lobby.room=null; lobbyClose(); } return; }
+  lobby.room=d.room;
+  if(d.room.phase==='countdown'&&!lobby.launched){ lobby.launched=true; lobbyClose(); startOnlineRace(d.room); return; }
+  if(lobbyEl().style.display!=='none') renderLobby();
+}
+function startOnlineRace(room){
+  const mySlot=room.players.findIndex(p=>p.me);
+  const players=room.players.map((p,i)=>({ name:p.name, sprite:PIPS[(room.seed+i)%PIPS.length], bot:false }));
+  newRace({seed:room.seed, players, mySlot});
+  race.online={code:room.code, startAt:room.startAt, inputsReady:false, settled:false};
+  // align the countdown to the server clock
+  const serverNow=Date.now()+lobby.clockOff;
+  race.t0=performance.now()-(COUNTDOWN*1000-(room.startAt-serverNow));
+}
+// online hooks used by the race loop
+async function onlineLock(){
+  if(!race||!race.online) return;
+  const me=race.pips[race.mySlot];
+  try{ await raceApi({action:'lock',code:race.online.code,angle:me.angle,power:me.power}); }catch(_){}
+}
+async function onlineFetchInputs(){
+  if(!race||!race.online||race.online.inputsReady) return false;
+  const d=await raceGet(race.online.code);
+  if(!d.ok||!d.room||!d.room.inputs) return false;
+  d.room.inputs.forEach((inp,i)=>{ if(race.pips[i]){ race.pips[i].angle=inp.angle; race.pips[i].power=inp.power; } });
+  race.online.inputsReady=true;
+  return true;
+}
+async function onlineSettle(){
+  if(!race||!race.online||race.online.settled) return;
+  race.online.settled=true;
+  try{
+    const d=await raceApi({action:'result',code:race.online.code});
+    if(d.ok&&d.room&&d.room.result){ race.serverResult=d.room.result; }
+  }catch(_){}
+  pullRaceBoard();
+}
+let raceBoard=[];
+async function pullRaceBoard(){
+  try{ const r=await fetch('/api/race?board=1',{cache:'no-store'}); const d=await r.json(); if(d.ok) raceBoard=d.board||[]; }catch(_){}
+}
+function startBotRace(){
+  const seed=(Math.random()*4294967295)>>>0;
+  const names=['NULL','GLITCH','STATIC','WEAK_SIG','DROPOUT','NO_SIG','CARRIER','ANTENNA'];
+  const players=[];
+  for(let i=0;i<RACE_SLOTS;i++){
+    const mine=(i===0);
+    players.push({ name: mine?(myName()||'YOU'):names[i], sprite:PIPS[Math.floor(Math.random()*PIPS.length)], bot:!mine });
+  }
+  newRace({seed, players, mySlot:0});
+}
+
 function loop(){
   tick++;
   if(flash>0) flash--;
   items.forEach(it=>{ if(it.type==='trap' && it.shut>0 && it.shut<1) it.shut=Math.min(1,it.shut+0.12); });
-  if(mode==='aim'){
+  if(mode==='aim' || (mode==='race' && race.phase==='aim' && !race.locked)){
     power+=powerDir*6.4;                     // fast meter
     if(power>=100){power=100;powerDir=-1;}
     if(power<=0){power=0;powerDir=1;}
@@ -907,7 +1427,8 @@ function loop(){
     if(pip.slow>45 || pip.frames>12000) endRun('STOPPED');
     spawnAhead();
   }
-  cam=(mode==='menu')?0:Math.max(0,pip.x-70);
+  if(mode==='race'){ raceTick(); }
+  cam=(mode==='menu')?0:(mode==='race'?raceCamX():Math.max(0,pip.x-70));
   // vertical follow: hold the ground shot until the pip climbs, then track it
   if(mode==='menu'){ camY=TY_BASE; }
   else{
@@ -921,8 +1442,8 @@ function loop(){
   ctx.translate(-cam*Z, camY); ctx.scale(Z,Z);
   drawBackground();
   drawGround();
-  if(mode!=='menu') items.forEach(drawItem);
-  drawCannon();
+  if(mode==='race'){ race.world.items.forEach(drawItem); drawRaceCannon(); }
+  else { if(mode!=='menu') items.forEach(drawItem); drawCannon(); }
   stains.forEach(st=>{ctx.fillStyle=st.c;ctx.fillRect(st.x,st.y,st.w,st.h);});
   splats.forEach(s=>{
     s.x+=s.vx;s.y+=s.vy;s.vy+=0.14;s.life--;
@@ -936,12 +1457,14 @@ function loop(){
     ctx.fillRect(b2.x-b2.r/2,b2.y-b2.r/2,b2.r,b2.r);
   });
   booms=booms.filter(b2=>b2.life>0);
-  if(mode==='fly'||mode==='dead'){
+  if(mode==='race'){ drawRacePips(); }
+  else if(mode==='fly'||mode==='dead'){
     drawPipSprite(pip.x,pip.y,pip.rot,22);
   }
   ctx.restore();
 
   // altitude marker when the pip is above the top of the view
+  if(mode==='race'){ drawRaceHud(); }
   if(mode==='fly' && pip.y*Z+camY < -4){
     const sx=Math.max(10,Math.min(W-40,(pip.x-cam)*Z));
     const alt=Math.max(0,Math.round((GROUND-9-pip.y)/PX_PER_FT));
@@ -963,6 +1486,7 @@ function loop(){
       ['BALLOON','FLY INTO THE BOMB FOR A MID AIR BOOST'],
       ['SPIKES','RUN ENDS'],
       ['FLYTRAP','RUN ENDS'],
+      ['RACE','R FOR BOTS, O FOR ONLINE. 8 PIPS, ONE TRACK'],
       ['RANK','CONNECT, SIGN IN, SET A NAME']
     ];
     lines.forEach(([k,v],i)=>{
@@ -986,10 +1510,16 @@ function loop(){
     });
     center('TAP OR SPACE TO PLAY',196,9,(Math.floor(tick/24)%2)?'#fff':'#9db8e8');
     center('BEST '+best+' FT',214,7,'#dce8ff');
-    ctx.fillStyle='#132a52'; ctx.fillRect(W/2-58,226,116,16);
-    ctx.strokeStyle='#9feaff'; ctx.lineWidth=1; ctx.strokeRect(W/2-57.5,226.5,115,15);
-    center('HOW TO PLAY',237,7,'#9feaff');
-  }else{
+    ctx.fillStyle='#132a52'; ctx.fillRect(W/2-120,226,116,16);
+    ctx.strokeStyle='#9feaff'; ctx.lineWidth=1; ctx.strokeRect(W/2-119.5,226.5,115,15);
+    ctx.font='7px '+P2; ctx.fillStyle='#9feaff'; ctx.fillText('HOW TO PLAY',W/2-120+(116-ctx.measureText('HOW TO PLAY').width)/2,237);
+    ctx.fillStyle='#3a1a52'; ctx.fillRect(W/2+4,226,116,16);
+    ctx.strokeStyle='#ff9dff'; ctx.strokeRect(W/2+4.5,226.5,115,15);
+    ctx.fillStyle='#ff9dff'; ctx.fillText('RACE VS BOTS',W/2+4+(116-ctx.measureText('RACE VS BOTS').width)/2,237);
+    ctx.fillStyle='#1a3a2a'; ctx.fillRect(W/2-58,246,116,16);
+    ctx.strokeStyle='#8cff6b'; ctx.strokeRect(W/2-57.5,246.5,115,15);
+    ctx.fillStyle='#8cff6b'; ctx.fillText('ONLINE RACE',W/2-58+(116-ctx.measureText('ONLINE RACE').width)/2,257);
+  }else if(mode!=='race'){
     ctx.font='10px '+P2;
     ctx.fillStyle='#123'; ctx.fillText(feet+' FT',9,19);
     ctx.fillStyle='#fff'; ctx.fillText(feet+' FT',8,18);

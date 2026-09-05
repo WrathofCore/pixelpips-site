@@ -40,3 +40,18 @@ The client never sends a distance. It sends the three inputs of the run
 server side to compute the distance itself. A seed can only be scored once per
 wallet. `_sim.js` must stay in lockstep with the physics in `pipcannon.html`:
 if you change gravity, bounce, hazard behaviour or spawn rules, change both.
+
+## Online races: `/api/race`
+
+All POSTs need a signed-in session and a claimed name.
+
+- `POST {action:'open'}` join the standing OPEN room (created if missing)
+- `POST {action:'create'}` new private room, returns a 4-letter code
+- `POST {action:'join', code}` · `{action:'leave', code}`
+- `POST {action:'start', code}` host only, needs 2+ players. Sets seed + startAt (12s).
+- `POST {action:'lock', code, angle, power}` during the countdown, once per player
+- `GET  /api/race?code=XXXX` room state. Inputs are hidden until the countdown ends.
+- `POST {action:'result', code}` first caller after the countdown triggers the server replay. Idempotent.
+- `GET  /api/race?board=1` race leaderboard, wins per name.
+
+The seed is server-chosen and inputs are locked before it is revealed to clients. Ranking always comes from `simulateRace` in `_sim.js`, never from a client.
