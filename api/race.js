@@ -8,6 +8,16 @@ import { simulateRace } from './_sim.js';
 
 const MAX = 8, COUNTDOWN_MS = 12000, ROOM_TTL = 1800, LOCK_GRACE_MS = 1500;
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+// The ten collection pips a racer can wear. Ten against a cap of eight means a
+// room can always seat everyone on a different one, so a taken pick is a
+// reassignment rather than an error. Keep this in step with PIPS in pipcannon.html.
+const SPRITES = [7, 12, 233, 395, 512, 1042, 2048, 2505, 2560, 2920];
+function claimSprite(room, want) {
+  const taken = new Set(room.players.map(p => p.sprite).filter(v => v != null));
+  const w = Number(want);
+  if (SPRITES.includes(w) && !taken.has(w)) return w;
+  return SPRITES.find(id => !taken.has(id)) ?? SPRITES[0];
+}
 const code = () => Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => ALPHA[b % ALPHA.length]).join('');
 
 const key = (c) => 'race:' + c;
@@ -16,7 +26,7 @@ const save = (room) => redis('SET', key(room.code), JSON.stringify(room), 'EX', 
 
 const publicRoom = (room, addr) => ({
   code: room.code, host: room.host, phase: room.phase, startAt: room.startAt || null, seed: room.seed ?? null,
-  players: room.players.map(p => ({ name: p.name, locked: p.angle != null, me: p.addr === addr })),
+  players: room.players.map(p => ({ name: p.name, locked: p.angle != null, sprite: p.sprite ?? null, me: p.addr === addr })),
   // inputs are only revealed once the countdown has expired
   inputs: (room.phase === 'running' || room.phase === 'done') ? room.players.map(p => ({ angle: p.angle, power: p.power })) : null,
   result: room.result || null,
@@ -71,7 +81,7 @@ export default async function handler(req, res) {
       }
       if (!room.players.find(p => p.addr === addr)) {
         if (room.players.length >= MAX) return res.status(409).json({ ok: false, error: 'full' });
-        room.players.push({ addr, name, angle: null, power: null });
+        room.players.push({ addr, name, sprite: claimSprite(room, body.sprite), angle: null, power: null });
       }
       room.updated = Date.now();
       await save(room);
@@ -86,7 +96,7 @@ export default async function handler(req, res) {
       if (room.phase !== 'lobby') return res.status(409).json({ ok: false, error: 'in-progress' });
       if (!room.players.find(p => p.addr === addr)) {
         if (room.players.length >= MAX) return res.status(409).json({ ok: false, error: 'full' });
-        room.players.push({ addr, name, angle: null, power: null });
+        room.players.push({ addr, name, sprite: claimSprite(room, body.sprite), angle: null, power: null });
       }
       room.updated = Date.now(); await save(room);
       return res.status(200).json({ ok: true, room: publicRoom(room, addr) });
