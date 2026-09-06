@@ -785,7 +785,7 @@ document.addEventListener('keydown',e=>{
   if(e.code==='ArrowDown'){nudge(-3);e.preventDefault();}
   if(e.code==='Space'){fire();e.preventDefault();}
   if(e.code==='Escape' && pauseOpen){ closePause(); e.preventDefault(); }
-  if(e.code==='KeyR' && mode==='menu' && !helpOpen){ startBotRace(); e.preventDefault(); }
+  if(e.code==='KeyR' && mode==='menu' && !helpOpen){ openPick('bots'); e.preventDefault(); }   // same route as the button
   if(e.code==='KeyO' && mode==='menu' && !helpOpen){ lobbyOpen(); e.preventDefault(); }
 });
 
