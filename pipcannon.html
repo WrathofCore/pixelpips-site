@@ -101,12 +101,21 @@
   <div class="card">
     <div class="lb-top">ONLINE RACE</div>
     <div id="lobby-body"></div>
+    <div id="lobby-pips"></div>
     <div class="lb-actions" id="lobby-actions"></div>
     <div class="sc-tip" id="lobby-note"></div>
   </div>
 </div>
 <div id="ticker"><div id="tickertrack"></div></div>
 <style>
+  #lobby-pips{display:none;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:10px}
+  #lobby-pips button{background:#0d1830;border:2px solid #2b3f6b;padding:2px;cursor:pointer;line-height:0;position:relative}
+  #lobby-pips button img{width:34px;height:34px;image-rendering:pixelated;display:block}
+  #lobby-pips button .pn{display:block;font-size:6px;color:#7f93bd;line-height:8px;text-align:center;letter-spacing:0}
+  #lobby-pips button.mine{border-color:#8cff6b}
+  #lobby-pips button.mine .pn{color:#8cff6b}
+  #lobby-pips button.taken{opacity:0.35;cursor:not-allowed}
+  #lobby-pips button.taken .pn{color:#ff8c8c}
   #ticker{position:fixed;left:0;right:0;bottom:0;background:#0e120c;border-top:2px solid #2a3a12;overflow:hidden;height:30px;z-index:9}
   #tickertrack{display:inline-flex;gap:34px;white-space:nowrap;padding:8px 0;font-size:11px;color:#c8f06a;animation:tick 40s linear infinite;will-change:transform}
   #tickertrack span b{color:#e8ff8a}
@@ -719,7 +728,7 @@ cv.addEventListener('pointerdown',e=>{
   e.stopPropagation();
   beep(660,60,0.04);
   if(b.id==='solo')   { openPick('solo'); }
-  if(b.id==='online') { openPick('online'); }
+  if(b.id==='online') { lobbyOpen(); }
   if(b.id==='bots')   { openPick('bots'); }
   if(b.id==='help')   { helpOpen=true; }
 },true);
@@ -1437,8 +1446,37 @@ async function raceGet(code){
   return d;
 }
 function lobbyNote(t){ const n=document.getElementById('lobby-note'); if(n) n.textContent=t||''; }
+function renderPipStrip(r){
+  const el=document.getElementById('lobby-pips');
+  if(!el) return;
+  if(!r || r.phase!=='lobby'){ el.style.display='none'; return; }
+  el.style.display='flex';
+  if(!el.dataset.built){
+    el.innerHTML=PIPS.map(p=>'<button data-id="'+p.id+'"><img src="'+p.src+'" alt=""><span class="pn">'+p.name+'</span></button>').join('');
+    el.dataset.built='1';
+    el.querySelectorAll('button').forEach(b=>{
+      b.onclick=()=>{ if(!b.classList.contains('taken')) lobbySprite(Number(b.dataset.id)); };
+    });
+  }
+  const mine=(r.players.find(p=>p.me)||{}).sprite;
+  const owner={}; r.players.forEach(p=>{ if(p.sprite!=null) owner[p.sprite]=p; });
+  el.querySelectorAll('button').forEach(b=>{
+    const id=Number(b.dataset.id), o=owner[id];
+    b.classList.toggle('mine', id===mine);
+    b.classList.toggle('taken', !!o && id!==mine);
+    b.title = o ? (id===mine?'YOURS':'TAKEN BY '+o.name) : 'AVAILABLE';
+  });
+}
+async function lobbySprite(id){
+  if(!lobby.room) return;
+  const d=await raceApi({action:'sprite', code:lobby.room.code, sprite:id});
+  if(!d||!d.ok){ lobbyNote(d&&d.error==='sprite-taken'?'THAT PIP WAS JUST TAKEN.':'COULD NOT CHANGE PIP.'); return; }
+  myPipId=id; persist();
+  lobby.room=d.room; lobbyNote(''); renderLobby();
+}
 function renderLobby(){
   const body=document.getElementById('lobby-body'), acts=document.getElementById('lobby-actions');
+  renderPipStrip(lobby.room && token && myName() ? lobby.room : null);
   if(!token||!myName()){
     body.innerHTML='<div class="muted">SIGN IN AND SET A NAME TO RACE ONLINE. RACES ARE RANKED, SO EVERYONE NEEDS A VERIFIED NAME.</div>';
     acts.innerHTML='<button class="mini ghost" id="lb-close">CLOSE</button>';
@@ -1456,7 +1494,7 @@ function renderLobby(){
   }
   body.innerHTML='<div class="code">'+r.code+'</div>'
     +'<div class="muted">'+(r.code==='OPEN'?'ANYONE ON THE SITE CAN JOIN THIS ROOM.':'SEND THIS CODE TO YOUR OPPONENTS.')+'</div>'
-    +'<div class="plist">'+r.players.map((p,i)=>'<div class="prow"><span>'+(i+1)+'. '+(p.me?'<b>'+p.name+'</b>':p.name)+(i===0?' <span class="muted">HOST</span>':'')+'</span><span class="muted">'+(r.phase==='lobby'?'READY':(p.locked?'LOCKED':'AIMING'))+'</span></div>').join('')+'</div>'
+    +'<div class="plist">'+r.players.map((p,i)=>'<div class="prow"><span>'+(i+1)+'. '+(p.me?'<b>'+p.name+'</b>':p.name)+(i===0?' <span class="muted">HOST</span>':'')+'</span><span class="muted">'+((pipById(p.sprite)||{}).name||'?')+' \u00b7 '+(r.phase==='lobby'?'READY':(p.locked?'LOCKED':'AIMING'))+'</span></div>').join('')+'</div>'
     +'<div class="muted">'+r.players.length+' / 8'+(r.phase==='countdown'?' \u00b7 STARTING':'')+'</div>';
   const meFirst=r.players[0]&&r.players[0].me;
   acts.innerHTML=(r.phase==='lobby'&&meFirst?'<button class="mini" id="lb-start">START RACE</button>':'')
@@ -1475,10 +1513,7 @@ async function lobbyEnter(body){
   if(!d.ok){ lobbyNote(d.error==='in-progress'?'OPEN ROOM IS MID-RACE. TRY AGAIN IN A MINUTE.':d.error==='full'?'ROOM IS FULL.':d.error==='no-room'?'NO ROOM WITH THAT CODE.':'COULD NOT JOIN: '+(d.error||d.status)); return; }
   lobby.room=d.room; lobby.launched=false;
   const me=(d.room.players||[]).find(p=>p.me);
-  if(me && me.sprite!=null && me.sprite!==myPipId){
-    myPipId=me.sprite; persist();
-    lobbyNote('PIP #'+me.sprite+' \u00b7 YOUR PICK WAS TAKEN');
-  }
+  if(me && me.sprite!=null){ myPipId=me.sprite; persist(); }
   renderLobby();
   if(lobby.poll) clearInterval(lobby.poll);
   lobby.poll=setInterval(lobbyPoll,700);

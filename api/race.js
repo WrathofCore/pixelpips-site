@@ -112,6 +112,21 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    if (action === 'sprite') {
+      // Pips are chosen in the lobby and locked the moment the race starts, so
+      // nobody can swap out from under someone who is already aiming.
+      if (room.phase !== 'lobby') return res.status(409).json({ ok: false, error: 'already-started' });
+      const me = room.players.find(p => p.addr === addr);
+      if (!me) return res.status(403).json({ ok: false, error: 'not-in-room' });
+      const want = Number(body.sprite);
+      if (!SPRITES.includes(want)) return res.status(400).json({ ok: false, error: 'bad-sprite' });
+      if (room.players.some(p => p.addr !== addr && p.sprite === want))
+        return res.status(409).json({ ok: false, error: 'sprite-taken' });
+      me.sprite = want;
+      room.updated = Date.now(); await save(room);
+      return res.status(200).json({ ok: true, room: publicRoom(room, addr) });
+    }
+
     if (action === 'start') {
       if (room.host !== addr) return res.status(403).json({ ok: false, error: 'host-only' });
       if (room.phase !== 'lobby') return res.status(409).json({ ok: false, error: 'already-started' });
