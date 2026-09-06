@@ -5,13 +5,15 @@
 import { redis, configured, limited, ip, isName } from './_kv.js';
 import { addrFor } from './auth.js';
 import { simulateRace } from './_sim.js';
+import '../physics.js';
 
 const MAX = 8, COUNTDOWN_MS = 12000, ROOM_TTL = 1800, LOCK_GRACE_MS = 1500;
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-// The ten collection pips a racer can wear. Ten against a cap of eight means a
-// room can always seat everyone on a different one, so a taken pick is a
-// reassignment rather than an error. Keep this in step with PIPS in pipcannon.html.
-const SPRITES = [7, 12, 233, 395, 512, 1042, 2048, 2505, 2560, 2920];
+// The pip roster lives in /physics.js, the one file both the browser and the
+// API load, so the server and the client cannot disagree about which pips
+// exist. Ten against a cap of eight means a room can always seat everyone on a
+// different one, so a taken pick is a reassignment rather than an error.
+const SPRITES = globalThis.PIPPHYS.SPRITES;
 function claimSprite(room, want) {
   const taken = new Set(room.players.map(p => p.sprite).filter(v => v != null));
   const w = Number(want);

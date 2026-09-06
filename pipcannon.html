@@ -149,6 +149,7 @@
   #posbody .prow b{color:#e8ff8a;font-weight:400}
   #posbody .phead{color:#aab78b;letter-spacing:1px;margin-top:5px}
 </style>
+<script src="physics.js"></script>
 <script>
 'use strict';
 const cv=document.getElementById('c'), ctx=ctxOf(), hud=document.getElementById('hud');
@@ -462,20 +463,18 @@ function quoteFor(ft){
   return 'OFF THE CHARTS. TOUCH GRASS.';
 }
 let paused=false, helpOpen=false, pauseOpen=false;
-// Deterministic RNG. Every value that can change where the pip lands comes from
-// here, so the server can replay a run from (seed, angle, power) and get the
-// exact same distance. Visual-only randomness keeps using Math.random.
-let rngState=1;
-function srand(seed){ rngState=(seed>>>0)||1; }
-function rnd(){
-  rngState^=rngState<<13; rngState>>>=0;
-  rngState^=rngState>>17;
-  rngState^=rngState<<5;  rngState>>>=0;
-  return rngState/4294967296;
-}
+// All physics lives in /physics.js (fixed point, shared with the server), so a
+// browser and the replay cannot disagree. This file only mirrors fixed state
+// into float pixels for drawing, and decorates steps with sounds and splats.
+// Visual-only randomness uses Math.random and never touches the seeded stream.
 let runSeed=0, runAngle=0, runPower=0, pframes=0;
+let solo=null;                 // {w, p} from PIPPHYS.soloSetup while a run is live
+function syncFromFixed(m, fpip){
+  const px=PIPPHYS.px;
+  m.x=px(fpip.x); m.y=px(fpip.y); m.vx=px(fpip.vx); m.vy=px(fpip.vy); m.stuck=fpip.stuck;
+}
 let mode='menu', angle=10+Math.floor(Math.random()*51), power=0, powerDir=1, lastThud=0, bounces=0, newBest=false;
-let items=[], splats=[], booms=[], stains=[], nextSpawnX=0, cam=0, feet=0, deadMsg='', tick=0, flash=0;
+let items=[], splats=[], booms=[], stains=[], cam=0, feet=0, deadMsg='', tick=0, flash=0, bobFrames=0;
 
 function newPip(){
   current=pipById(myPipId)||PIPS[0];
@@ -485,47 +484,10 @@ function reset(){
   mode='aim'; power=0; powerDir=1; bounces=0;
   angle=10+Math.floor(Math.random()*51);
   newPip();
-  items=[]; splats=[]; booms=[]; stains=[]; nextSpawnX=200; bag=[]; lastType=''; lastRun=0; prevPair=false; cam=0; feet=0; deadMsg=''; flash=0;
+  solo=null; items=[]; splats=[]; booms=[]; stains=[]; cam=0; feet=0; deadMsg=''; flash=0;
 }
 newPip();
 
-// shuffled bag: every 12 spawns contains a fixed mix, reshuffled each cycle,
-// and no type may appear more than twice in a row.
-// 24 slots: 6 TNT, 9 trampoline, 6 balloon, 2 spikes, 1 flytrap.
-const BAG=['tnt','tnt','tnt','tnt','tnt','tnt','tramp','tramp','tramp','tramp','tramp','tramp','tramp','tramp','tramp','balloon','balloon','balloon','balloon','balloon','balloon','spikes','spikes','trap'];
-let bag=[], lastType='', lastRun=0, prevPair=false;
-function refillBag(){
-  const add=BAG.slice();
-  for(let i=add.length-1;i>0;i--){ const j=(rnd()*(i+1))|0; [add[i],add[j]]=[add[j],add[i]]; }
-  bag=bag.concat(add);
-}
-function pickIdx(blocked){
-  for(let k=bag.length-1;k>=0;k--){ if(blocked===null||bag[k]!==blocked) return k; }
-  return -1;
-}
-function nextType(){
-  // Two of a kind in a row is allowed; three is not, and a pair is never
-  // followed straight away by another pair. If everything left in the bag is
-  // the blocked type, shuffle in a fresh bag rather than giving up, which is
-  // what previously let streaks run long.
-  if(!bag.length) refillBag();
-  const blocked = (lastRun>=2 || (prevPair && lastRun>=1)) ? lastType : null;
-  let i=pickIdx(blocked);
-  if(i<0){ refillBag(); i=pickIdx(blocked); }
-  if(i<0) i=bag.length-1;
-  const t=bag.splice(i,1)[0];
-  if(t===lastType){ lastRun++; }
-  else { prevPair=(lastRun===2); lastRun=1; lastType=t; }
-  return t;
-}
-function spawnAhead(){
-  while(nextSpawnX < cam+VW+400){
-    const type=nextType();
-    if(type==='balloon') items.push({type,x:nextSpawnX,y:GROUND-64-rnd()*88,used:false});
-    else items.push({type,x:nextSpawnX,used:false});
-    nextSpawnX += 60 + rnd()*120;
-  }
-}
 function fire(){
   if(mode==='race'){
     if(race.phase==='aim'){ raceLock(); return; }
@@ -539,11 +501,10 @@ function fire(){
   if(mode!=='aim') return;
   runSeed=(Math.random()*4294967295)>>>0;
   runAngle=angle; runPower=Math.round(power*1000)/1000;
-  srand(runSeed); pframes=0;
-  items=[]; bag=[]; lastType=''; lastRun=0; prevPair=false; nextSpawnX=200;
-  const sp=8+(runPower/100)*13, a=runAngle*Math.PI/180;
-  pip.x=33+Math.cos(a)*62; pip.y=GROUND-24-Math.sin(a)*62;
-  pip.vx=Math.cos(a)*sp; pip.vy=-Math.sin(a)*sp;
+  pframes=0;
+  solo=PIPPHYS.soloSetup(runSeed, runAngle, runPower);
+  items=solo.w.items;                       // fixed items carry rx/ry for drawing
+  syncFromFixed(pip, solo.p); pip.rot=0;
   mode='fly'; paused=false; flash=8; SND.fire();
   setTimeout(()=>{if(mode==='fly')SND.cry();},320);
 }
@@ -567,10 +528,38 @@ function exitToMenu(){
   if(mode==='race'){ if(race && race.online) onlineSettle(); race=null; }
   mode='menu'; helpOpen=false; SND.menu();
 }
+function soloEnd(q,msg){
+  PIPPHYS.endPip(q,msg);        // marks the fixed pip dead, exactly as the sim does
+  syncFromFixed(pip,q); feet=q.feet;
+  endRun(msg);
+}
+function soloFx(ev,d){
+  if(ev==='balloon'){ boomFx(d.it.rx+9,d.by+8); SND.boom(); }
+  else if(ev==='trap'){
+    d.it.shut=0.001;
+    splat(d.x,GROUND-29,40);
+    for(let k=0;k<10;k++) stain(d.it.rx+3+Math.random()*16, GROUND-33+Math.random()*18, 2+Math.random()*2, 1+Math.random()*3);
+    smear(d.x,6,20); SND.chomp();
+  }
+  else if(ev==='tnt'){ boomFx(d.x,GROUND-10); splat(d.x,GROUND-8,16); smear(d.x,5,20); SND.boom(); }
+  else if(ev==='tramp'){ SND.boing(); }
+  else if(ev==='spikes'){
+    splat(d.x,d.y,60);
+    for(let k=0;k<18;k++) stain(d.it.rx+Math.random()*24, GROUND-13+Math.random()*11, 2+Math.random()*2, 1+Math.random()*3);
+    smear(d.x,8,26); SND.impale();
+  }
+  else if(ev==='bounce'){
+    bounces++;
+    if(d.impact>1.2){ splat(d.x,GROUND-4,Math.min(22,6+d.impact*2|0)); smear(d.x,3+Math.min(9,d.impact|0),14+d.impact*2); }
+    const now=performance.now();
+    if(d.impact>1.6 && now-lastThud>110){ SND.slap(d.impact); lastThud=now; }
+    if(bounces===2) SND.cry2();
+  }
+}
 function endRun(msg){
   if(mode!=='fly') return;
   mode='dead'; deadMsg=msg; paused=false;
-  feet=Math.max(feet,Math.floor((pip.x-44)/PX_PER_FT));
+  if(solo) feet=solo.p.feet;
   recordRun(feet,msg);
   SND.land();
   if(newBest) showShareCard(feet,msg);
@@ -890,6 +879,8 @@ function drawCannon(){
       ctx.fillStyle = i<lit ? (i>6?'#ff3b1f':(i>3?'#ffb61f':'#5ce03a')) : '#2c2c26';
       ctx.fillRect(px-9+i*2.1,py+3,1.6,3);
     }
+    ctx.fillStyle='#fff'; ctx.font='5px monospace';
+    ctx.fillText(String(Math.round(power)).padStart(3,' '),px+11,py+7);
   }
   ctx.fillStyle='#9a9a92'; ctx.fillRect(px-2,py-22,2,9);
   ctx.fillStyle='#c9202a'; ctx.fillRect(px-13,py-28,26,7);
@@ -902,7 +893,7 @@ function drawPipSprite(x,y,rot,s){
   ctx.restore();
 }
 function drawItem(it){
-  const x=it.x;
+  const x=it.rx;
   if(it.type==='tnt'){
     if(it.used) return;
     // cluster of red barrels with TNT labels and fuses
@@ -974,7 +965,7 @@ function drawItem(it){
     ctx.restore();
   }else if(it.type==='balloon'){
     if(it.used) return;
-    const by=it.y+Math.sin((mode==='race'?race.pframes:pframes)/22+x)*2;
+    const by=PIPPHYS.bobY(it, bobFrames);   // drawn where it collides
     // red balloon with knot and highlight
     ctx.fillStyle='#d92b2b';
     ctx.beginPath(); ctx.ellipse(x+9,by,7,8,0,0,7); ctx.fill();
@@ -998,55 +989,6 @@ function drawItem(it){
     ctx.fillStyle='#2b3036'; ctx.fillRect(x+7,bh-5,4,2);       // lug the string ties to
   }
 }
-function hitItems(){
-  for(const it of items){
-    if(it.type==='balloon'){
-      if(it.used) continue;
-      const by=it.y+Math.sin(pframes/22+it.x)*2;
-      if(Math.abs(pip.x-(it.x+9))<22 && pip.y>by-10 && pip.y<by+28){
-        it.used=true;
-        boomFx(it.x+9,by+8);
-        pip.vy=-(12+rnd()*5);
-        pip.vx=Math.max(pip.vx*0.9,4)+3+rnd()*3;
-        SND.boom();
-      }
-      continue;
-    }
-    if(it.type==='trap'){
-      // jaws only: a tight box at the top of the stem, so high shots clear it
-      if(Math.abs(pip.x-(it.x+11))<11 && Math.abs(pip.y-(GROUND-27))<9){
-        it.shut=0.001;                                    // start the chomp
-        pip.x=it.x+11; pip.y=GROUND-27; pip.stuck=true;
-        splat(pip.x,GROUND-29,40);
-        for(let k=0;k<10;k++) stain(it.x+3+Math.random()*16, GROUND-33+Math.random()*18, 2+Math.random()*2, 1+Math.random()*3);
-        smear(pip.x,6,20);
-        SND.chomp();
-        endRun('EATEN');
-      }
-      continue;
-    }
-    const w=(it.type==='spikes')?24:(it.type==='tramp'?26:(it.type==='tnt'?15:18));
-    if(pip.x<it.x||pip.x>it.x+w) continue;
-    if(it.type==='tnt' && !it.used && pip.y>GROUND-22){
-      it.used=true;
-      boomFx(pip.x,GROUND-10);
-      pip.vx=Math.max(pip.vx,5)+4+rnd()*4;
-      pip.vy=-(13+rnd()*5);
-      splat(pip.x,GROUND-8,16); smear(pip.x,5,20); SND.boom();
-    }else if(it.type==='tramp' && pip.vy>0 && pip.y>GROUND-18){
-      pip.y=GROUND-18;
-      pip.vy=-Math.max(12,Math.abs(pip.vy)*1.35);
-      pip.vx*=1.02; SND.boing();
-    }else if(it.type==='spikes' && pip.y>GROUND-18){
-      pip.x=it.x+12; pip.y=GROUND-16; pip.stuck=true;
-      splat(pip.x,pip.y,60);
-      for(let k=0;k<18;k++) stain(it.x+Math.random()*24, GROUND-13+Math.random()*11, 2+Math.random()*2, 1+Math.random()*3);
-      smear(pip.x,8,26);
-      SND.impale();
-      endRun('IMPALED');
-    }
-  }
-}
 
 
 // ============================================================ RACE MODE
@@ -1058,25 +1000,18 @@ const RACE_SLOTS=8, COUNTDOWN=10;
 const SLOT_COLORS=['#ffd94a','#ff6b6b','#6bd7ff','#8cff6b','#ff9dff','#ffb36b','#b48cff','#f0f0f0'];
 let race=null;
 
-function makeRng(seed){
-  let st=(seed>>>0)||1;
-  return ()=>{ st^=st<<13; st>>>=0; st^=st>>17; st^=st<<5; st>>>=0; return st/4294967296; };
-}
-function raceWorldRng(seed){ return makeRng(seed); }
-function racePipRng(seed,slot){ return makeRng((seed ^ Math.imul(slot+1,0x9E3779B9))>>>0); }
 
 function newRace({seed, players, mySlot}){
   // players: [{name, sprite, angle, power, bot}] in slot order. angle/power may be filled later.
-  const wr=raceWorldRng(seed);
   race={
     seed, mySlot, phase:'aim', t0:performance.now(), countdown:COUNTDOWN, locked:false,
-    world:{rng:wr, bag:[], lastType:'', lastRun:0, prevPair:false, nextSpawnX:200, items:[]},
+    world:{items:[]},                       // replaced by the fixed world at raceFire
     pframes:0,
     pips: players.map((p,i)=>({
       slot:i, name:p.name, sprite:p.sprite, bot:!!p.bot,
       angle:p.angle, power:p.power,
-      x:0,y:0,vx:0,vy:0,rot:0,stuck:false,slow:0,frames:0,
-      feet:0, dead:false, how:'', rng:racePipRng(seed,i), place:0
+      x:0,y:0,vx:0,vy:0,rot:0,stuck:false,
+      feet:0, dead:false, how:'', f:null, place:0
     })),
     order:[], finished:false, spectSlot:null
   };
@@ -1088,106 +1023,43 @@ function newRace({seed, players, mySlot}){
   SND.menu();
 }
 
-// ---- world helpers, same rules as solo but bound to the race world object
-function raceRefill(w){
-  const add=BAG.slice();
-  for(let i=add.length-1;i>0;i--){ const j=(w.rng()*(i+1))|0; [add[i],add[j]]=[add[j],add[i]]; }
-  w.bag=w.bag.concat(add);
-}
-function racePick(w,blocked){ for(let k=w.bag.length-1;k>=0;k--){ if(blocked===null||w.bag[k]!==blocked) return k; } return -1; }
-function raceNextType(w){
-  if(!w.bag.length) raceRefill(w);
-  const blocked=(w.lastRun>=2||(w.prevPair&&w.lastRun>=1))?w.lastType:null;
-  let i=racePick(w,blocked);
-  if(i<0){ raceRefill(w); i=racePick(w,blocked); }
-  if(i<0) i=w.bag.length-1;
-  const t=w.bag.splice(i,1)[0];
-  if(t===w.lastType){ w.lastRun++; } else { w.prevPair=(w.lastRun===2); w.lastRun=1; w.lastType=t; }
-  return t;
-}
-function raceSpawn(w,leadX){
-  while(w.nextSpawnX < leadX-70+VW+400){
-    const type=raceNextType(w);
-    if(type==='balloon') w.items.push({type,x:w.nextSpawnX,y:GROUND-64-w.rng()*88,used:false});
-    else w.items.push({type,x:w.nextSpawnX,used:false});
-    w.nextSpawnX += 60 + w.rng()*120;
-  }
-}
 function raceFire(){
   const r=race;
-  r.pips.forEach(p=>{
-    if(p.angle==null) p.angle=10+Math.floor(p.rng()*51);
-    if(p.power==null) p.power=Math.round(p.rng()*100000)/1000;
-    const sp=8+(p.power/100)*13, a=p.angle*Math.PI/180;
-    p.x=33+Math.cos(a)*62; p.y=GROUND-24-Math.sin(a)*62;
-    p.vx=Math.cos(a)*sp; p.vy=-Math.sin(a)*sp;
+  // one shared setup decides launch state, streams and null inputs, exactly as
+  // the server replay will
+  const st=PIPPHYS.raceSetup(r.seed, r.pips.map(p=>({angle:p.angle, power:p.power})));
+  r.fw=st.w; r.world=st.w;
+  r.pips.forEach((p,i)=>{
+    p.f=st.pips[i];
+    p.angle=p.f.angle; p.power=p.f.pm/1000;   // resolved values for the HUD
+    syncFromFixed(p, p.f); p.rot=0;
   });
   r.phase='fly'; r.flyT0=performance.now(); flash=8; SND.fire();
   setTimeout(()=>{ if(race&&race.phase==='fly') SND.cry(); },320);
 }
 function raceEndPip(p,how){
   if(p.dead) return;
-  p.dead=true; p.how=how;
-  p.feet=Math.max(p.feet,Math.floor((p.x-44)/PX_PER_FT));
+  PIPPHYS.endPip(p.f,how);      // dead in the sim first, or the pip keeps
+  syncFromFixed(p, p.f);        // stepping and eats items others should hit
+  p.dead=true; p.how=how; p.feet=p.f.feet;
   race.order.push(p.slot);
   if(p.slot===race.mySlot){ SND.land(); }
 }
-function raceStepPip(p,w){
-  if(p.dead) return;
-  p.vy+=0.31; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vx*0.06;
-  p.feet=Math.max(p.feet,Math.floor((p.x-44)/PX_PER_FT));
-  for(const it of w.items){
-    if(p.dead) break;
-    if(it.type==='balloon'){
-      if(it.used) continue;
-      const by=it.y+Math.sin(race.pframes/22+it.x)*2;
-      if(Math.abs(p.x-(it.x+9))<22 && p.y>by-10 && p.y<by+28){
-        it.used=true; boomFx(it.x+9,by+8);
-        p.vy=-(12+p.rng()*5); p.vx=Math.max(p.vx*0.9,4)+3+p.rng()*3;
-        if(p.slot===raceFocus().slot) SND.boom();
-      }
-      continue;
-    }
-    if(it.type==='trap'){
-      if(Math.abs(p.x-(it.x+11))<11 && Math.abs(p.y-(GROUND-27))<9){
-        it.shut=0.001; p.x=it.x+11; p.y=GROUND-27; p.stuck=true;
-        splat(p.x,GROUND-29,40); smear(p.x,6,20);
-        if(p.slot===raceFocus().slot) SND.chomp();
-        raceEndPip(p,'EATEN');
-      }
-      continue;
-    }
-    const wdt=(it.type==='spikes')?24:(it.type==='tramp'?26:(it.type==='tnt'?15:18));
-    if(p.x<it.x||p.x>it.x+wdt) continue;
-    if(it.type==='tnt' && !it.used && p.y>GROUND-22){
-      it.used=true; boomFx(p.x,GROUND-10);
-      p.vx=Math.max(p.vx,5)+4+p.rng()*4; p.vy=-(13+p.rng()*5);
-      splat(p.x,GROUND-8,16); smear(p.x,5,20);
-      if(p.slot===raceFocus().slot) SND.boom();
-    }else if(it.type==='tramp' && p.vy>0 && p.y>GROUND-18){
-      p.y=GROUND-18; p.vy=-Math.max(12,Math.abs(p.vy)*1.35); p.vx*=1.02;
-      if(p.slot===raceFocus().slot) SND.boing();
-    }else if(it.type==='spikes' && p.y>GROUND-18){
-      p.x=it.x+12; p.y=GROUND-16; p.stuck=true;
-      splat(p.x,p.y,60); smear(p.x,8,26);
-      for(let k=0;k<18;k++) stain(it.x+Math.random()*24, GROUND-13+Math.random()*11, 2+Math.random()*2, 1+Math.random()*3);
-      if(p.slot===raceFocus().slot) SND.impale();
-      raceEndPip(p,'IMPALED');
-    }
+function raceFx(p,ev,d){
+  const heard=(p.slot===raceFocus().slot);
+  if(ev==='balloon'){ boomFx(d.it.rx+9,d.by+8); if(heard) SND.boom(); }
+  else if(ev==='trap'){ d.it.shut=0.001; splat(d.x,GROUND-29,40); smear(d.x,6,20); if(heard) SND.chomp(); }
+  else if(ev==='tnt'){ boomFx(d.x,GROUND-10); splat(d.x,GROUND-8,16); smear(d.x,5,20); if(heard) SND.boom(); }
+  else if(ev==='tramp'){ if(heard) SND.boing(); }
+  else if(ev==='spikes'){
+    splat(d.x,d.y,60); smear(d.x,8,26);
+    for(let k=0;k<18;k++) stain(d.it.rx+Math.random()*24, GROUND-13+Math.random()*11, 2+Math.random()*2, 1+Math.random()*3);
+    if(heard) SND.impale();
   }
-  if(p.dead) return;
-  if(!p.stuck && p.y>=GROUND-9){
-    p.y=GROUND-9;
-    const impact=Math.abs(p.vy);
-    if(impact>1.2){ splat(p.x,GROUND-4,Math.min(22,6+impact*2|0)); smear(p.x,3+Math.min(9,impact|0),14+impact*2); }
-    if(p.slot===raceFocus().slot){ const now=performance.now(); if(impact>1.6&&now-lastThud>110){ SND.slap(impact); lastThud=now; } }
-    p.vy*=-(0.55+p.rng()*0.14); p.vx*=0.972;
-    if(Math.abs(p.vy)<0.9 && Math.abs(p.vx)<0.5) raceEndPip(p,'STOPPED');
+  else if(ev==='bounce'){
+    if(d.impact>1.2){ splat(d.x,GROUND-4,Math.min(22,6+d.impact*2|0)); smear(d.x,3+Math.min(9,d.impact|0),14+d.impact*2); }
+    if(heard){ const now=performance.now(); if(d.impact>1.6&&now-lastThud>110){ SND.slap(d.impact); lastThud=now; } }
   }
-  if(p.dead) return;
-  p.frames++;
-  if(Math.abs(p.vx)<0.4 && Math.abs(p.vy)<1.2) p.slow++; else p.slow=0;
-  if(p.slow>45 || p.frames>12000) raceEndPip(p,'STOPPED');
 }
 function raceTick(){
   const r=race;
@@ -1218,11 +1090,13 @@ function raceStepFrame(){
   if(!r || r.phase!=='fly') return;
   r.pframes++;
   if(flash>0) flash--;
-  r.pips.forEach(p=>raceStepPip(p,r.world));
+  // slot order, one shared world, per-pip streams: identical to the server replay
+  for(const p of r.pips) if(!p.f.dead) PIPPHYS.stepPip(p.f, r.fw, r.pframes, (q,how)=>raceEndPip(p,how), (ev,d)=>raceFx(p,ev,d));
+  let lead=-Infinity; for(const p of r.pips) if(p.f.x>lead) lead=p.f.x;
+  PIPPHYS.spawn(r.fw, lead - 70*PIPPHYS.S);
+  if(r.fw.items.length>4000) r.fw.items=r.fw.items.slice(-2000);
+  for(const p of r.pips) if(!p.dead){ syncFromFixed(p, p.f); p.rot+=p.vx*0.06; p.feet=p.f.feet; }
   const alive=r.pips.filter(p=>!p.dead);
-  const lead=Math.max(...r.pips.map(p=>p.x));
-  raceSpawn(r.world,lead);
-  if(r.world.items.length>4000) r.world.items=r.world.items.slice(-2000);
   if(!alive.length && !r.finished){
     r.finished=true; r.phase='done';
     const ranked=r.pips.slice().sort((a,b)=>b.feet-a.feet);
@@ -1314,6 +1188,8 @@ function drawRaceCannon(){
   if(race.phase==='aim'){
     const lit=Math.round((race.locked?race.pips[race.mySlot].power:power)/100*9);
     for(let i=0;i<9;i++){ ctx.fillStyle=i<lit?(i>6?'#ff3b1f':(i>3?'#ffb61f':'#5ce03a')):'#2c2c26'; ctx.fillRect(px-9+i*2.1,py+3,1.6,3); }
+    ctx.fillStyle='#fff'; ctx.font='5px monospace';
+    ctx.fillText(String(Math.round(power)).padStart(3,' '),px+11,py+7);
   }
   ctx.fillStyle='#9a9a92'; ctx.fillRect(px-2,py-22,2,9);
   ctx.fillStyle='#c9202a'; ctx.fillRect(px-13,py-28,26,7);
@@ -1598,28 +1474,13 @@ function loop(){
   }
   if(mode==='fly' && !paused){
     pframes++;
-    pip.vy+=0.31;
-    pip.x+=pip.vx; pip.y+=pip.vy;
-    pip.rot+=pip.vx*0.06;
-    feet=Math.max(feet,Math.floor((pip.x-44)/PX_PER_FT));
-    hitItems();
-    if(!pip.stuck && pip.y>=GROUND-9){
-      pip.y=GROUND-9;
-      const impact=Math.abs(pip.vy);
-      bounces++;
-      if(impact>1.2){ splat(pip.x,GROUND-4,Math.min(22,6+impact*2|0)); smear(pip.x,3+Math.min(9,impact|0),14+impact*2); }
-      const now=performance.now();
-      if(impact>1.6 && now-lastThud>110){ SND.slap(impact); lastThud=now; }
-      if(bounces===2) SND.cry2();
-      pip.vy*=-(0.55+rnd()*0.14);    // bouncier + a bit random
-      pip.vx*=0.972;
-      if(Math.abs(pip.vy)<0.9 && Math.abs(pip.vx)<0.5) endRun('STOPPED');
+    PIPPHYS.stepPip(solo.p, solo.w, pframes, soloEnd, soloFx);
+    if(mode==='fly'){
+      PIPPHYS.spawn(solo.w, solo.p.x - 70*PIPPHYS.S);
+      syncFromFixed(pip, solo.p);
+      pip.rot+=pip.vx*0.06;
+      feet=solo.p.feet;
     }
-    // safety: a pip that stops making progress, or flies absurdly long, ends the run
-    pip.frames++;
-    if(Math.abs(pip.vx)<0.4 && Math.abs(pip.vy)<1.2) pip.slow++; else pip.slow=0;
-    if(pip.slow>45 || pip.frames>12000) endRun('STOPPED');
-    spawnAhead();
   }
   if(mode==='race'){
     if(race.phase!=='fly'){ raceTick(); }
